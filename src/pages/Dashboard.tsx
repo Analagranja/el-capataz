@@ -7,7 +7,6 @@ import { eventsService } from '../services/events';
 import { expensesService } from '../services/expenses';
 import { useAuth } from '../contexts/AuthContext';
 import { useDashboardMetricsTick } from '../contexts/DashboardMetricsRefreshContext';
-import { useRole } from '../hooks/useRole';
 import { computeMonthToDateTotals, currentMonthStartLocalYmd, todayLocalYmd } from '../utils/monthToDateFinance';
 import { formatArs } from '../utils/formatCurrency';
 import Card from '../components/ui/Card';
@@ -53,9 +52,19 @@ function displayNameForSanidad(ev: Event): string {
   return SANIDAD_TYPE_LABEL[ev.event_type] ?? 'Tratamiento';
 }
 
+function dashboardRole(raw: unknown): 'admin' | 'operator' | 'vendedor' {
+  const s = String(raw ?? 'admin')
+    .trim()
+    .toLowerCase();
+  if (s === 'operator') return 'operator';
+  if (s === 'vendedor') return 'vendedor';
+  return 'admin';
+}
+
 export default function Dashboard({ selectedGallineroId: _selectedGallineroId }: DashboardProps) {
-  const { organizationId } = useAuth();
-  const { isOperator } = useRole();
+  const { organizationId, role: profileRole } = useAuth();
+  const userRole = dashboardRole(profileRole);
+  const showGananciaDelMes = userRole === 'admin';
   const dashboardTick = useDashboardMetricsTick();
   const [gallineros, setGallineros] = React.useState<Gallinero[]>([]);
   const [productionMonth, setProductionMonth] = React.useState<ProductionRecord[]>([]);
@@ -217,7 +226,11 @@ export default function Dashboard({ selectedGallineroId: _selectedGallineroId }:
         </div>
       </Card>
 
-      <div className={`grid grid-cols-2 gap-3 sm:gap-4 ${isOperator ? 'lg:grid-cols-2' : 'lg:grid-cols-4'}`}>
+      <div
+        className={`grid grid-cols-2 gap-3 sm:gap-4 ${
+          showGananciaDelMes ? 'lg:grid-cols-4' : 'lg:grid-cols-3'
+        }`}
+      >
         <Card
           padding="none"
           hover
@@ -270,34 +283,32 @@ export default function Dashboard({ selectedGallineroId: _selectedGallineroId }:
           </div>
         </Card>
 
-        {!isOperator && (
-          <Card
-            padding="none"
-            hover
-            className="!overflow-hidden !rounded-3xl !border-0 !bg-gradient-to-br from-amber-100/80 via-orange-50 to-rose-100/30 !shadow-lg !shadow-amber-200/25 ring-1 ring-white/70"
-          >
-            <div className="flex min-h-[148px] flex-col gap-4 p-5 sm:min-h-[160px] sm:p-6">
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 sm:text-xs">
-                  Postura promedio
-                </p>
-                <span
-                  className="flex h-14 w-14 shrink-0 select-none items-center justify-center rounded-2xl bg-white/75 text-[2.5rem] leading-none shadow-sm antialiased ring-1 ring-white sm:h-16 sm:w-16 sm:text-[2.75rem]"
-                  role="img"
-                  aria-label="Tendencia"
-                >
-                  📈
-                </span>
-              </div>
-              <p className="text-3xl font-semibold tabular-nums tracking-tight text-slate-900 sm:text-4xl">
-                {avgLayingPercentage.toFixed(1)}%
+        <Card
+          padding="none"
+          hover
+          className="!overflow-hidden !rounded-3xl !border-0 !bg-gradient-to-br from-amber-100/80 via-orange-50 to-rose-100/30 !shadow-lg !shadow-amber-200/25 ring-1 ring-white/70"
+        >
+          <div className="flex min-h-[148px] flex-col gap-4 p-5 sm:min-h-[160px] sm:p-6">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 sm:text-xs">
+                Postura promedio
               </p>
-              <p className="mt-auto text-[11px] text-slate-500 sm:text-xs">últimos 30 días</p>
+              <span
+                className="flex h-14 w-14 shrink-0 select-none items-center justify-center rounded-2xl bg-white/75 text-[2.5rem] leading-none shadow-sm antialiased ring-1 ring-white sm:h-16 sm:w-16 sm:text-[2.75rem]"
+                role="img"
+                aria-label="Tendencia"
+              >
+                📈
+              </span>
             </div>
-          </Card>
-        )}
+            <p className="text-3xl font-semibold tabular-nums tracking-tight text-slate-900 sm:text-4xl">
+              {avgLayingPercentage.toFixed(1)}%
+            </p>
+            <p className="mt-auto text-[11px] text-slate-500 sm:text-xs">últimos 30 días</p>
+          </div>
+        </Card>
 
-        {!isOperator && (
+        {showGananciaDelMes ? (
           <Card
             padding="none"
             hover
@@ -324,11 +335,12 @@ export default function Dashboard({ selectedGallineroId: _selectedGallineroId }:
                 {formatArs(gananciaDelMes)}
               </p>
               <p className="mt-auto text-[11px] text-slate-500 sm:text-xs">
-                Ventas del 1 al {Number(todayYmd.slice(8, 10))} − gastos del mismo período · toda la granja · {monthLabel}
+                Ventas del 1 al {Number(todayYmd.slice(8, 10))} − gastos del mismo período · toda la granja ·{' '}
+                {monthLabel}
               </p>
             </div>
           </Card>
-        )}
+        ) : null}
 
       </div>
 

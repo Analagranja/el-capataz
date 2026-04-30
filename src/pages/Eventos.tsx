@@ -9,7 +9,7 @@ import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
 import Modal from '../components/ui/Modal';
 import Badge from '../components/ui/Badge';
-import { Plus, CreditCard as Edit2, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Trash2 } from 'lucide-react';
 
 const EVENT_TYPE_OPTIONS: { value: EventType; label: string }[] = [
   { value: 'vacunacion', label: 'Vacunación' },
@@ -405,7 +405,7 @@ export default function Eventos({ selectedGallineroId }: EventosProps) {
                     </div>
                     <div className="flex gap-2 shrink-0">
                       <Button variant="secondary" size="sm" onClick={() => handleOpenModal(ev)}>
-                        <Edit2 size={16} />
+                        <Pencil size={16} aria-hidden />
                       </Button>
                       <Button variant="danger" size="sm" onClick={() => handleDelete(ev.id)}>
                         <Trash2 size={16} />

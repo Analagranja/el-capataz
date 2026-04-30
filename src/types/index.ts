@@ -96,7 +96,7 @@ export interface FeedLog {
   created_at: string;
 }
 
-export type UserRole = 'admin' | 'operator';
+export type UserRole = 'admin' | 'operator' | 'vendedor';
 
 export type Page =
   | 'dashboard'

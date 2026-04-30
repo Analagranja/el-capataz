@@ -7,7 +7,7 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Modal from '../components/ui/Modal';
-import { Plus, CreditCard as Edit2, Trash2, Egg } from 'lucide-react';
+import { Plus, Pencil, Trash2, Egg } from 'lucide-react';
 
 interface GallinerosProps {
   onRegisterProduction: (gallineroId: string) => void;
@@ -15,7 +15,7 @@ interface GallinerosProps {
 
 export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
   const { organizationId } = useAuth();
-  const { isAdmin } = useRole();
+  const { canManageCoops } = useRole();
   const [gallineros, setGallineros] = React.useState<Gallinero[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
@@ -51,6 +51,7 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
   }, [organizationId]);
 
   const handleOpenModal = (gallinero?: Gallinero) => {
+    if (!canManageCoops()) return;
     if (gallinero) {
       setEditingId(gallinero.id);
       setFormData({
@@ -76,7 +77,7 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!organizationId) return;
+    if (!canManageCoops() || !organizationId) return;
     try {
       if (editingId) {
         await gallinerosService.update(organizationId, editingId, formData);
@@ -96,7 +97,7 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
   };
 
   const handleRequestDelete = (g: Gallinero) => {
-    if (!isAdmin) return;
+    if (!canManageCoops()) return;
     setDeleteTarget(g);
   };
 
@@ -106,7 +107,7 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
   };
 
   const handleConfirmDelete = async () => {
-    if (!isAdmin) return;
+    if (!canManageCoops()) return;
     if (!organizationId || !deleteTarget) return;
     setDeleting(true);
     try {
@@ -126,22 +127,30 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <h2 className="text-3xl font-bold text-gray-900">Gallineros</h2>
-        <Button variant="primary" onClick={() => handleOpenModal()}>
-          <Plus size={20} />
-          Nuevo Gallinero
-        </Button>
+        {canManageCoops() ? (
+          <Button variant="primary" onClick={() => handleOpenModal()}>
+            <Plus size={20} />
+            Nuevo gallinero
+          </Button>
+        ) : null}
       </div>
 
       {gallineros.length === 0 ? (
         <Card padding="md">
           <div className="py-8 text-center space-y-4">
             <p className="text-gray-600">No hay gallineros registrados</p>
-            <Button variant="primary" onClick={() => handleOpenModal()}>
-              <Plus size={20} />
-              Nuevo Gallinero
-            </Button>
+            {canManageCoops() ? (
+              <Button variant="primary" onClick={() => handleOpenModal()}>
+                <Plus size={20} />
+                Nuevo gallinero
+              </Button>
+            ) : (
+              <p className="text-sm text-gray-500 max-w-md mx-auto">
+                Pedile a un administrador de la granja que dé de alta el primer gallinero.
+              </p>
+            )}
           </div>
         </Card>
       ) : (
@@ -178,26 +187,30 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
                   </Button>
                 </div>
 
-                <div className="flex gap-2">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => handleOpenModal(gallinero)}
-                    className="flex-1"
-                  >
-                    <Edit2 size={16} />
-                  </Button>
-                  {isAdmin && (
+                {canManageCoops() ? (
+                  <div className="flex gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handleOpenModal(gallinero)}
+                      className="flex-1"
+                      title="Editar"
+                    >
+                      <Pencil size={16} aria-hidden />
+                    </Button>
                     <Button
                       variant="danger"
                       size="sm"
                       onClick={() => handleRequestDelete(gallinero)}
                       className="flex-1"
+                      title="Eliminar"
                     >
                       <Trash2 size={16} />
                     </Button>
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-500 pt-1">Solo lectura · edición solo administradores</p>
+                )}
               </div>
             </Card>
           ))}

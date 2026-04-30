@@ -169,7 +169,7 @@ export default function Clientes() {
                   onClick={() => openEditCustomer(row)}
                   aria-label={`Editar ${row.name}`}
                 >
-                  <Pencil size={16} />
+                  <Pencil size={16} aria-hidden />
                 </Button>
               ),
             },

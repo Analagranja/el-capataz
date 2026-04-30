@@ -13,32 +13,53 @@ import {
   Wallet,
   Settings,
 } from 'lucide-react';
-import { Page } from '../../types';
+import { Page, type UserRole } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
-import { useRole } from '../../hooks/useRole';
 
 interface SidebarProps {
   currentPage: Page;
   onNavigate: (page: Page) => void;
 }
 
+/** Rol efectivo del perfil en Supabase (AuthContext carga `profiles.role`; siempre minúsculas). */
+function normalizeMenuRole(raw: unknown): UserRole {
+  const s = String(raw ?? 'admin')
+    .trim()
+    .toLowerCase();
+  if (s === 'operator') return 'operator';
+  if (s === 'vendedor') return 'vendedor';
+  return 'admin';
+}
+
+/** Menú lateral según rol real — sin vista temporal ni overrides (solo RBAC). */
+function showMenuItemForRole(pageId: Page, userRole: UserRole): boolean {
+  if (userRole === 'admin') return true;
+  if (userRole === 'operator') {
+    return !['ventas', 'clientes', 'gastos', 'estadisticas', 'configuracion'].includes(pageId);
+  }
+  if (userRole === 'vendedor') {
+    return !['gastos', 'configuracion'].includes(pageId);
+  }
+  return true;
+}
+
 export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
   const [isOpen, setIsOpen] = React.useState(false);
-  const { signOut } = useAuth();
-  const { isAdmin, canAccessPage } = useRole();
+  const { signOut, role: profileRoleFromDb } = useAuth();
+  const userRole = normalizeMenuRole(profileRoleFromDb);
 
-  const menuItems = [
-    { id: 'dashboard' as Page, label: 'Panel', icon: Home },
-    { id: 'gallineros' as Page, label: 'Gallineros', icon: Layers },
-    { id: 'produccion' as Page, label: 'Producción', icon: TrendingUp },
-    { id: 'ventas' as Page, label: 'Ventas', icon: ShoppingCart },
-    { id: 'clientes' as Page, label: 'Clientes', icon: Contact },
-    { id: 'gastos' as Page, label: 'Gastos', icon: Wallet },
-    { id: 'eventos' as Page, label: 'Eventos', icon: AlertCircle },
-    { id: 'estadisticas' as Page, label: 'Estadísticas', icon: BarChart3 },
-    ...(isAdmin ? [{ id: 'configuracion' as Page, label: 'Configuración', icon: Settings }] : []),
+  const menuItems: { id: Page; label: string; icon: typeof Home }[] = [
+    { id: 'dashboard', label: 'Panel', icon: Home },
+    { id: 'gallineros', label: 'Gallineros', icon: Layers },
+    { id: 'produccion', label: 'Producción', icon: TrendingUp },
+    { id: 'ventas', label: 'Ventas', icon: ShoppingCart },
+    { id: 'clientes', label: 'Clientes', icon: Contact },
+    { id: 'gastos', label: 'Gastos', icon: Wallet },
+    { id: 'eventos', label: 'Eventos', icon: AlertCircle },
+    { id: 'estadisticas', label: 'Estadísticas', icon: BarChart3 },
+    { id: 'configuracion', label: 'Configuración', icon: Settings },
   ];
-  const visibleMenuItems = menuItems.filter((item) => canAccessPage(item.id));
+  const visibleMenuItems = menuItems.filter((item) => showMenuItemForRole(item.id, userRole));
 
   const handleNavigate = (page: Page) => {
     onNavigate(page);

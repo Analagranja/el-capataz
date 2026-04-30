@@ -10,7 +10,7 @@ import Select from '../components/ui/Select';
 import Modal from '../components/ui/Modal';
 import Table from '../components/ui/Table';
 import Badge from '../components/ui/Badge';
-import { Plus, CreditCard as Edit2, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { formatArs } from '../utils/formatCurrency';
 
 const SALE_TYPE_OPTIONS: Array<{ value: Sale['type']; label: string }> = [
@@ -275,7 +275,7 @@ export default function Ventas() {
               render: (_, row: Sale) => (
                 <div className="flex gap-2">
                   <Button variant="secondary" size="sm" onClick={() => handleOpenModal(row)}>
-                    <Edit2 size={16} />
+                    <Pencil size={16} aria-hidden />
                   </Button>
                   <Button variant="danger" size="sm" onClick={() => handleDelete(row.id)}>
                     <Trash2 size={16} />

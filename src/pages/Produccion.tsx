@@ -4,6 +4,7 @@ import { gallinerosService } from '../services/gallineros';
 import { productionService, productionFormDateToDbDate, computeLayingPercentage } from '../services/production';
 import { feedLogsService } from '../services/feedLogs';
 import { useAuth } from '../contexts/AuthContext';
+import { useRole } from '../hooks/useRole';
 import { useBumpDashboardMetrics } from '../contexts/DashboardMetricsRefreshContext';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -11,7 +12,7 @@ import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
 import Modal from '../components/ui/Modal';
 import Table from '../components/ui/Table';
-import { Plus, CreditCard as Edit2, Trash2, Package } from 'lucide-react';
+import { Plus, Pencil, Trash2, Package } from 'lucide-react';
 
 interface Produccion {
   selectedGallineroId: string | null;
@@ -26,6 +27,7 @@ const LAST_BAG_KG_KEY = 'produccion_last_feed_bag_kg';
 
 export default function Produccion({ selectedGallineroId }: Produccion) {
   const { organizationId } = useAuth();
+  const { canLogProduction } = useRole();
   const bumpDashboardMetrics = useBumpDashboardMetrics();
   const [gallineros, setGallineros] = React.useState<Gallinero[]>([]);
   const [production, setProduction] = React.useState<ProductionRecord[]>([]);
@@ -114,6 +116,7 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
   }, [currentGallineroId, organizationId, selectedYear, selectedMonth]);
 
   const handleOpenModal = (record?: ProductionRecord) => {
+    if (!canLogProduction()) return;
     setError('');
     if (record) {
       setEditingId(record.id);
@@ -152,7 +155,7 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
   };
 
   const handleSaveFeedLog = async () => {
-    if (!organizationId) return;
+    if (!canLogProduction() || !organizationId) return;
     if (!currentGallineroId) {
       setFeedLogError('Seleccioná un gallinero para registrar la apertura de bolsa.');
       return;
@@ -206,6 +209,7 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canLogProduction()) return;
     setError('');
     setDuplicateInfo(null);
 
@@ -297,7 +301,7 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
   };
 
   const handleDelete = async (id: string) => {
-    if (!organizationId) return;
+    if (!canLogProduction() || !organizationId) return;
     if (window.confirm('¿Está seguro?')) {
       try {
         await productionService.delete(organizationId, id);
@@ -341,25 +345,31 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <h2 className="text-3xl font-bold text-gray-900">Producción Diaria</h2>
-        <div className="flex gap-2">
-          <Button
-            variant="secondary"
-            onClick={() => {
-              setFeedLogError('');
-              setIsFeedLogModalOpen(true);
-            }}
-            disabled={!currentGallineroId}
-            title={!currentGallineroId ? 'Seleccioná un gallinero para registrar bolsa.' : undefined}
-          >
-            <Package size={18} />
-            Registrar Bolsa
-          </Button>
-          <Button variant="primary" onClick={() => handleOpenModal()}>
-            <Plus size={20} />
-            Nueva Recolección
-          </Button>
+        <div className="flex flex-wrap gap-2">
+          {canLogProduction() ? (
+            <>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setFeedLogError('');
+                  setIsFeedLogModalOpen(true);
+                }}
+                disabled={!currentGallineroId}
+                title={!currentGallineroId ? 'Seleccioná un gallinero para registrar bolsa.' : undefined}
+              >
+                <Package size={18} />
+                Registrar Bolsa
+              </Button>
+              <Button variant="primary" onClick={() => handleOpenModal()}>
+                <Plus size={20} />
+                Nueva Recolección
+              </Button>
+            </>
+          ) : (
+            <p className="text-sm text-gray-500 self-center">Solo lectura · registro de producción solo para admin u operario.</p>
+          )}
         </div>
       </div>
 
@@ -442,43 +452,43 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
                       {
                         key: 'gallinero_id',
                         label: 'Gallinero',
-                        render: (value: any) => gallineros.find((g) => g.id === value)?.name || '—',
+                        render: (value: unknown) => gallineros.find((g) => g.id === value)?.name || '—',
                       },
                     ]),
                 { key: 'eggs_count', label: 'Huevos' },
                 {
                   key: 'laying_percentage',
                   label: '% Postura',
-                  render: (_, row: ProductionRecord) =>
+                  render: (_: unknown, row: ProductionRecord) =>
                     `${computeLayingPercentage(row.eggs_count, getRecordHens(row)).toFixed(1)}%`,
                 },
                 {
                   key: 'notes',
                   label: 'Notas',
-                  render: (value) => value || '-',
+                  render: (value: unknown) => value || '-',
                 },
-                {
-                  key: 'id',
-                  label: 'Acciones',
-                  render: (_, row: ProductionRecord) => (
-                    <div className="flex gap-2">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => handleOpenModal(row)}
-                      >
-                        <Edit2 size={16} />
-                      </Button>
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        onClick={() => handleDelete(row.id)}
-                      >
-                        <Trash2 size={16} />
-                      </Button>
-                    </div>
-                  ),
-                },
+                ...(canLogProduction()
+                  ? [
+                      {
+                        key: 'id',
+                        label: 'Acciones',
+                        render: (_: unknown, row: ProductionRecord) => (
+                          <div className="flex gap-2">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => handleOpenModal(row)}
+                            >
+                              <Pencil size={16} aria-hidden />
+                            </Button>
+                            <Button variant="danger" size="sm" onClick={() => handleDelete(row.id)}>
+                              <Trash2 size={16} />
+                            </Button>
+                          </div>
+                        ),
+                      },
+                    ]
+                  : []),
               ]}
               data={production}
             />
