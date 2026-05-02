@@ -55,6 +55,38 @@ export const feedLogsService = {
     return (data || []).map((row) => toFeedLog(row as FeedLogRow));
   },
 
+  async getAllRange(organizationId: string, fromDate: string, toDate: string): Promise<FeedLog[]> {
+    const { data, error } = await supabase
+      .from('feed_logs')
+      .select('id, organization_id, gallinero_id, log_date, kg_opened, created_at')
+      .eq('organization_id', organizationId)
+      .gte('log_date', fromDate)
+      .lte('log_date', toDate)
+      .order('log_date', { ascending: false });
+
+    if (error) throw error;
+    return (data || []).map((row) => toFeedLog(row as FeedLogRow));
+  },
+
+  async getByGallineroRange(
+    organizationId: string,
+    gallineroId: string,
+    fromDate: string,
+    toDate: string
+  ): Promise<FeedLog[]> {
+    const { data, error } = await supabase
+      .from('feed_logs')
+      .select('id, organization_id, gallinero_id, log_date, kg_opened, created_at')
+      .eq('organization_id', organizationId)
+      .eq('gallinero_id', gallineroId)
+      .gte('log_date', fromDate)
+      .lte('log_date', toDate)
+      .order('log_date', { ascending: false });
+
+    if (error) throw error;
+    return (data || []).map((row) => toFeedLog(row as FeedLogRow));
+  },
+
   async create(
     organizationId: string,
     gallineroId: string,

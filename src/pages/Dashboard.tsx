@@ -141,6 +141,12 @@ export default function Dashboard({ selectedGallineroId: _selectedGallineroId }:
   const monthEggsTotal = productionMonth.reduce((sum, p) => sum + p.eggs_count, 0);
 
   const monthLabel = new Date().toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+  const gananciaMesTitulo = (() => {
+    const d = new Date();
+    const mes = d.toLocaleDateString('es-AR', { month: 'long' });
+    const mesLower = mes.charAt(0).toLowerCase() + mes.slice(1);
+    return `Ganancia ${mesLower} ${d.getFullYear()}`;
+  })();
 
   const avgLayingPercentage =
     production.length > 0
@@ -334,10 +340,7 @@ export default function Dashboard({ selectedGallineroId: _selectedGallineroId }:
               >
                 {formatArs(gananciaDelMes)}
               </p>
-              <p className="mt-auto text-[11px] text-slate-500 sm:text-xs">
-                Ventas del 1 al {Number(todayYmd.slice(8, 10))} − gastos del mismo período · toda la granja ·{' '}
-                {monthLabel}
-              </p>
+              <p className="mt-auto text-[11px] text-slate-500 sm:text-xs">{gananciaMesTitulo}</p>
             </div>
           </Card>
         ) : null}

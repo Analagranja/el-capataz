@@ -7,7 +7,9 @@ function normalizeUserRole(raw: unknown): UserRole {
   const s = String(raw ?? '')
     .trim()
     .toLowerCase();
-  return s === 'operator' ? 'operator' : 'admin';
+  if (s === 'operator') return 'operator';
+  if (s === 'vendedor') return 'vendedor';
+  return 'admin';
 }
 
 type AuthContextValue = {
@@ -19,7 +21,11 @@ type AuthContextValue = {
   loading: boolean;
   organizationMissing: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string, farmName: string) => Promise<{ error: Error | null; needsEmailConfirmation: boolean }>;
+  signUp: (
+    email: string,
+    password: string,
+    opts: { farmName?: string; inviteCode?: string; fullName?: string }
+  ) => Promise<{ error: Error | null; needsEmailConfirmation: boolean }>;
   signOut: () => Promise<void>;
   refreshOrganization: () => Promise<void>;
 };
@@ -171,12 +177,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: error ? new Error(error.message) : null };
   }, []);
 
-  const signUp = useCallback(async (email: string, password: string, farmName: string) => {
-    const { data, error } = await supabase.auth.signUp({
-      email, password, options: { data: { farm_name: farmName } }
-    });
-    return { error: error ? new Error(error.message) : null, needsEmailConfirmation: !data.session };
-  }, []);
+  const signUp = useCallback(
+    async (email: string, password: string, opts: { farmName?: string; inviteCode?: string; fullName?: string }) => {
+      const invite = (opts.inviteCode?.trim() ?? '').toUpperCase();
+      const farm = opts.farmName?.trim() ?? '';
+      const fullName = opts.fullName?.trim() ?? '';
+      const inviteInvalidMsg = 'Código de invitación inválido';
+
+      if (invite) {
+        const { data: inviteOk, error: rpcError } = await supabase.rpc('validate_invite_code', {
+          p_code: invite,
+        });
+        if (rpcError) {
+          console.error('validate_invite_code:', rpcError);
+        } else if (inviteOk !== true) {
+          return { error: new Error(inviteInvalidMsg), needsEmailConfirmation: false };
+        }
+      }
+
+      const dataPayload: Record<string, string> = {};
+      if (fullName) {
+        dataPayload.full_name = fullName;
+        dataPayload.fullName = fullName;
+      }
+      if (invite) {
+        dataPayload.invite_code = invite;
+        dataPayload.inviteCode = invite;
+      } else if (farm) {
+        dataPayload.farm_name = farm;
+      }
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: dataPayload },
+      });
+      let err = error ? new Error(error.message) : null;
+      if (
+        err &&
+        /INVITE_CODE_INVALID|invalid_invite_code|P0001|check_violation|23514|Database error saving new user/i.test(
+          err.message
+        )
+      ) {
+        err = new Error(inviteInvalidMsg);
+      }
+      return { error: err, needsEmailConfirmation: !data.session };
+    },
+    []
+  );
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();

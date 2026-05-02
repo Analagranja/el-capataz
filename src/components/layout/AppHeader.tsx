@@ -1,5 +1,5 @@
 import React from 'react';
-import { Gallinero } from '../../types';
+import { Gallinero, type UserRole } from '../../types';
 import { gallinerosService } from '../../services/gallineros';
 import { useAuth } from '../../contexts/AuthContext';
 import { useRole } from '../../hooks/useRole';
@@ -42,15 +42,24 @@ export default function AppHeader({ selectedGallineroId, onGallineroChange }: Ap
 
   if (loading) {
     return (
-      <header className="bg-white border-b border-gray-200 shadow-sm">
-        <div className="h-16 px-6 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Granja Avícola</h1>
-            {organizationName && (
-              <p className="text-xs text-emerald-700 font-medium truncate max-w-[200px] sm:max-w-md">
-                {organizationName}
-              </p>
-            )}
+      <header className="bg-white border-b border-capataz-mint-soft shadow-sm">
+        <div className="h-16 px-6 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <img
+              src="/logo-granja.png"
+              alt=""
+              className="h-10 w-10 shrink-0 rounded-full object-contain ring-1 ring-capataz-mint/80 bg-capataz-mint-soft/40"
+              width={40}
+              height={40}
+            />
+            <div className="min-w-0">
+              <h1 className="text-xl sm:text-2xl font-bold text-capataz-forest truncate">El Capataz</h1>
+              {organizationName && (
+                <p className="text-xs text-capataz-forest-light font-medium truncate max-w-[200px] sm:max-w-md">
+                  {organizationName}
+                </p>
+              )}
+            </div>
           </div>
         </div>
       </header>
@@ -63,28 +72,40 @@ export default function AppHeader({ selectedGallineroId, onGallineroChange }: Ap
   }));
 
   return (
-    <header className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-20">
+    <header className="bg-white border-b border-capataz-mint-soft shadow-sm sticky top-0 z-20">
       <div className="h-auto min-h-16 px-6 py-2 flex flex-wrap items-center justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-gray-900">Granja Avícola</h1>
-          {organizationName && (
-            <p className="text-xs text-emerald-700 font-medium truncate">{organizationName}</p>
-          )}
+        <div className="flex items-center gap-3 min-w-0">
+          <img
+            src="/logo-granja.png"
+            alt=""
+            className="h-10 w-10 shrink-0 rounded-full object-contain ring-1 ring-capataz-mint/80 bg-capataz-mint-soft/40"
+            width={40}
+            height={40}
+          />
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold text-capataz-forest truncate">El Capataz</h1>
+            {organizationName && (
+              <p className="text-xs text-capataz-forest-light font-medium truncate">{organizationName}</p>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3 flex-1 justify-end min-w-0">
           {actualRole === 'admin' && (
             <div className="w-full max-w-[220px]">
               <Select
-                label="Vista (temporal)"
+                aria-label="Previsualizar la interfaz según el rol"
                 options={[
                   { value: '', label: 'Rol real' },
-                  { value: 'admin', label: 'Vista Admin' },
-                  { value: 'operator', label: 'Vista Operario' },
+                  { value: 'admin', label: 'Administrador' },
+                  { value: 'operator', label: 'Operario' },
+                  { value: 'vendedor', label: 'Vendedor' },
                 ]}
                 value={roleViewOverride || ''}
                 onChange={(e) => {
                   const v = e.target.value;
-                  setTemporaryRoleView(v === 'admin' || v === 'operator' ? v : null);
+                  setTemporaryRoleView(
+                    v === 'admin' || v === 'operator' || v === 'vendedor' ? (v as UserRole) : null
+                  );
                 }}
                 className="text-sm"
               />

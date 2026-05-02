@@ -27,7 +27,8 @@ import Button from '../components/ui/Button';
 import Select from '../components/ui/Select';
 import { Download } from 'lucide-react';
 import { downloadSalesAndProductionExcel } from '../utils/exportFarmData';
-import { computeMonthToDateTotals, currentMonthStartLocalYmd, todayLocalYmd } from '../utils/monthToDateFinance';
+import { computeMonthToDateTotals } from '../utils/monthToDateFinance';
+import { boundsForYearMonthFilter, boundsForCalendarYear, todayLocalYmdParts } from '../utils/statsPeriod';
 import { formatArs } from '../utils/formatCurrency';
 
 interface Estadisticas {
@@ -40,23 +41,20 @@ const EGGS_PER_SALE_TYPE: Record<Sale['type'], number> = {
   media_docena: 6,
 };
 
-function daysInFilteredPeriod(activeYear: string, selectedMonth: string): number {
-  const today = new Date();
-  const currentYear = String(today.getFullYear());
-  const currentMonth = String(today.getMonth() + 1).padStart(2, '0');
-
-  if (selectedMonth) {
-    if (activeYear === currentYear && selectedMonth === currentMonth) {
-      return Math.max(1, today.getDate());
-    }
-    return Math.max(1, new Date(Number(activeYear), Number(selectedMonth), 0).getDate());
-  }
-
-  if (activeYear === currentYear) {
-    return Math.max(1, today.getDate());
-  }
-  return 365;
-}
+const MONTH_NAMES = [
+  'Enero',
+  'Febrero',
+  'Marzo',
+  'Abril',
+  'Mayo',
+  'Junio',
+  'Julio',
+  'Agosto',
+  'Septiembre',
+  'Octubre',
+  'Noviembre',
+  'Diciembre',
+] as const;
 
 export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
   const { organizationId } = useAuth();
@@ -66,8 +64,10 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
   const [expenses, setExpenses] = React.useState<Expense[]>([]);
   const [events, setEvents] = React.useState<Event[]>([]);
   const [feedLogs, setFeedLogs] = React.useState<FeedLog[]>([]);
-  const [salesMonthToDate, setSalesMonthToDate] = React.useState<Sale[]>([]);
-  const [expensesMonthToDate, setExpensesMonthToDate] = React.useState<Expense[]>([]);
+  const [summaryProduction, setSummaryProduction] = React.useState<ProductionRecord[]>([]);
+  const [summarySales, setSummarySales] = React.useState<Sale[]>([]);
+  const [summaryExpenses, setSummaryExpenses] = React.useState<Expense[]>([]);
+  const [summaryLoading, setSummaryLoading] = React.useState(true);
   const [loading, setLoading] = React.useState(true);
   const [exporting, setExporting] = React.useState(false);
   const [exportError, setExportError] = React.useState('');
@@ -89,35 +89,64 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
     if (!organizationId) return;
     try {
       setLoading(true);
-      const monthStartYmd = currentMonthStartLocalYmd();
-      const todayYmd = todayLocalYmd();
-      const [productionData, salesData, expensesData, eventsData, salesMtd, expensesMtd, feedLogsData] = await Promise.all([
+      const y = Number(selectedYear);
+      const { y: cy, ymd: todayY } = todayLocalYmdParts();
+      let fromY = `${y}-01-01`;
+      let toY: string;
+      if (y > cy) {
+        toY = `${y}-01-01`;
+      } else if (y < cy) {
+        toY = `${y}-12-31`;
+      } else {
+        toY = todayY;
+      }
+
+      const [productionData, salesData, expensesData, eventsData, feedLogsData] = await Promise.all([
         currentGallineroId
-          ? productionService.getByGallinero(organizationId, currentGallineroId, 30)
-          : productionService.getAll(organizationId, 30),
-        salesService.getAll(organizationId, 30),
-        expensesService.getAll(organizationId, 90),
+          ? productionService.getByGallineroRange(organizationId, currentGallineroId, fromY, toY)
+          : productionService.getAllRange(organizationId, fromY, toY),
+        salesService.getAllRange(organizationId, fromY, toY),
+        expensesService.getAllRange(organizationId, fromY, toY),
         currentGallineroId
-          ? eventsService.getByGallinero(organizationId, currentGallineroId, 30)
-          : eventsService.getAll(organizationId, 30),
-        salesService.getAllRange(organizationId, monthStartYmd, todayYmd),
-        expensesService.getAllRange(organizationId, monthStartYmd, todayYmd),
+          ? eventsService.getByGallineroRange(organizationId, currentGallineroId, fromY, toY)
+          : eventsService.getAllRange(organizationId, fromY, toY),
         currentGallineroId
-          ? feedLogsService.getByGallinero(organizationId, currentGallineroId, 730)
-          : feedLogsService.getAll(organizationId, 730),
+          ? feedLogsService.getByGallineroRange(organizationId, currentGallineroId, fromY, toY)
+          : feedLogsService.getAllRange(organizationId, fromY, toY),
       ]);
 
       setProduction(productionData);
       setSales(salesData);
       setExpenses(expensesData);
       setEvents(eventsData);
-      setSalesMonthToDate(salesMtd);
-      setExpensesMonthToDate(expensesMtd);
       setFeedLogs(feedLogsData);
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMonthlySummary = async () => {
+    if (!organizationId) return;
+    try {
+      setSummaryLoading(true);
+      const sy = new Date().getFullYear();
+      const { fromYmd, toYmd } = boundsForCalendarYear(sy);
+      const [prod, saleRows, expRows] = await Promise.all([
+        currentGallineroId
+          ? productionService.getByGallineroRange(organizationId, currentGallineroId, fromYmd, toYmd)
+          : productionService.getAllRange(organizationId, fromYmd, toYmd),
+        salesService.getAllRange(organizationId, fromYmd, toYmd),
+        expensesService.getAllRange(organizationId, fromYmd, toYmd),
+      ]);
+      setSummaryProduction(prod);
+      setSummarySales(saleRows);
+      setSummaryExpenses(expRows);
+    } catch (error) {
+      console.error('Error loading monthly summary:', error);
+    } finally {
+      setSummaryLoading(false);
     }
   };
 
@@ -133,15 +162,30 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
 
   React.useEffect(() => {
     loadData();
+  }, [currentGallineroId, organizationId, selectedYear]);
+
+  React.useEffect(() => {
+    loadMonthlySummary();
   }, [currentGallineroId, organizationId]);
 
+  const fallbackYearOptions = React.useMemo(() => {
+    const y = new Date().getFullYear();
+    return Array.from({ length: 12 }, (_, i) => String(y - i));
+  }, []);
+
   const availableYears = Array.from(
-    new Set(
-      [...production, ...sales, ...expenses, ...events, ...feedLogs]
-        .map((item) => item.date.split('-')[0])
-        .filter(Boolean)
-    )
-  ).sort((a, b) => b.localeCompare(a));
+    new Set([
+      selectedYear,
+      ...fallbackYearOptions,
+      ...production.map((item) => item.date.split('-')[0]),
+      ...sales.map((item) => item.date.split('-')[0]),
+      ...expenses.map((item) => item.date.split('-')[0]),
+      ...events.map((item) => item.date.split('-')[0]),
+      ...feedLogs.map((item) => item.date.split('-')[0]),
+    ])
+  )
+    .filter(Boolean)
+    .sort((a, b) => b.localeCompare(a));
   const activeYear = availableYears.includes(selectedYear)
     ? selectedYear
     : availableYears[0] || selectedYear;
@@ -262,19 +306,51 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
   }, 0);
   const totalSalesAmount = filteredSales.reduce((sum, s) => sum + s.total_price, 0);
   const avgPricePerEgg = totalEggsSold > 0 ? totalSalesAmount / totalEggsSold : 0;
-  const monthToDateFinance = computeMonthToDateTotals(
-    salesMonthToDate,
-    expensesMonthToDate,
-    currentMonthStartLocalYmd(),
-    todayLocalYmd()
+  const periodBounds = boundsForYearMonthFilter(activeYear, selectedMonth);
+  const periodFinance = computeMonthToDateTotals(
+    filteredSales,
+    filteredExpenses,
+    periodBounds.fromYmd,
+    periodBounds.toYmd
   );
   const totalFeedKg = filteredFeedLogs.reduce((sum, f) => sum + (f.kg_opened || 0), 0);
   const hensForConsumption = currentGallineroId
     ? gallineros.find((g) => g.id === currentGallineroId)?.current_count ?? 0
     : gallineros.reduce((sum, g) => sum + g.current_count, 0);
-  const daysForConsumption = daysInFilteredPeriod(activeYear, selectedMonth);
   const gramsPerHenPerDay =
-    hensForConsumption > 0 && totalFeedKg > 0 ? ((totalFeedKg / hensForConsumption) / daysForConsumption) * 1000 : 0;
+    hensForConsumption > 0 && totalFeedKg > 0 && periodBounds.dayCount > 0
+      ? (totalFeedKg * 1000) / (hensForConsumption * periodBounds.dayCount)
+      : 0;
+
+  const summaryCalendarYear = new Date().getFullYear();
+  const padMonth = (n: number) => String(n).padStart(2, '0');
+  const monthlySummaryRows = MONTH_NAMES.map((monthLabel, idx) => {
+    const m = idx + 1;
+    const prefix = `${summaryCalendarYear}-${padMonth(m)}`;
+    const prodM = summaryProduction.filter((p) => p.date.startsWith(prefix));
+    const saleM = summarySales.filter((s) => s.date.startsWith(prefix));
+    const expM = summaryExpenses.filter((e) => e.date.startsWith(prefix));
+    const totalHuevosMes = prodM.reduce((sum, p) => sum + p.eggs_count, 0);
+    const huevosVendidosMes = saleM.reduce((sum, s) => {
+      const eggsByType = EGGS_PER_SALE_TYPE[s.type] || 0;
+      return sum + s.quantity * eggsByType;
+    }, 0);
+    const netoMes = saleM.reduce((sum, s) => sum + (Number(s.total_price) || 0), 0);
+    const gastosMes = expM.reduce((sum, e) => sum + (Number(e.total_price) || 0), 0);
+    const gananciaMes = netoMes - gastosMes;
+    return {
+      monthLabel,
+      totalHuevosMes,
+      huevosVendidosMes,
+      netoMes,
+      gananciaMes,
+    };
+  });
+  const totalHuevosAnual = monthlySummaryRows.reduce((sum, r) => sum + r.totalHuevosMes, 0);
+  const totalVentasAnual = monthlySummaryRows.reduce((sum, r) => sum + r.netoMes, 0);
+  const totalHuevosVendidosAnual = monthlySummaryRows.reduce((sum, r) => sum + r.huevosVendidosMes, 0);
+  const precioPromedioHuevoAnual =
+    totalHuevosVendidosAnual > 0 ? totalVentasAnual / totalHuevosVendidosAnual : 0;
 
   const gallineroOptions = [
     { value: '', label: 'Todos los Gallineros' },
@@ -298,17 +374,19 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
       const from = toYmd(startD);
       const to = toYmd(endD);
 
-      const [saleRows, prodRows] = await Promise.all([
+      const [saleRows, prodRows, expenseRows] = await Promise.all([
         salesService.getAllRange(organizationId, from, to),
         currentGallineroId
           ? productionService.getByGallineroRange(organizationId, currentGallineroId, from, to)
           : productionService.getAllRange(organizationId, from, to),
+        expensesService.getAllRange(organizationId, from, to),
       ]);
 
       const gallineroNameById = new Map(gallineros.map((g) => [g.id, g.name]));
       downloadSalesAndProductionExcel({
         sales: saleRows,
         production: prodRows,
+        expenses: expenseRows,
         gallineroNameById,
         fromLabel: from,
         toLabel: to,
@@ -454,8 +532,9 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
         <Card padding="md" hover>
           <div>
-            <p className="text-sm text-gray-600 mb-1">Huevos Puestos (30d)</p>
+            <p className="text-sm text-gray-600 mb-1">Huevos puestos</p>
             <p className="text-2xl font-bold text-gray-900">{totalEggsProduced}</p>
+            <p className="text-xs text-gray-500 mt-1">Total del período filtrado</p>
           </div>
         </Card>
 
@@ -463,13 +542,15 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
           <div>
             <p className="text-sm text-gray-600 mb-1">% Postura Promedio</p>
             <p className="text-2xl font-bold text-gray-900">{avgLayingPercentage.toFixed(1)}%</p>
+            <p className="text-xs text-gray-500 mt-1">Promedio diarios del período</p>
           </div>
         </Card>
 
         <Card padding="md" hover>
           <div>
-            <p className="text-sm text-gray-600 mb-1">Huevos Vendidos (30d)</p>
+            <p className="text-sm text-gray-600 mb-1">Huevos vendidos</p>
             <p className="text-2xl font-bold text-gray-900">{totalEggsSold}</p>
+            <p className="text-xs text-gray-500 mt-1">Equivalente por tipo de venta</p>
           </div>
         </Card>
 
@@ -477,6 +558,7 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
           <div>
             <p className="text-sm text-gray-600 mb-1">Precio Promedio por Huevo</p>
             <p className="text-2xl font-bold text-gray-900">{formatArs(avgPricePerEgg)}</p>
+            <p className="text-xs text-gray-500 mt-1">Sobre el período filtrado</p>
           </div>
         </Card>
 
@@ -485,11 +567,12 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
             <p className="text-sm text-gray-600 mb-1">Ganancia</p>
             <p
               className={`text-2xl font-bold ${
-                monthToDateFinance.gananciaDelMes >= 0 ? 'text-green-700' : 'text-red-700'
+                periodFinance.gananciaDelMes >= 0 ? 'text-green-700' : 'text-red-700'
               }`}
             >
-              {formatArs(monthToDateFinance.gananciaDelMes)}
+              {formatArs(periodFinance.gananciaDelMes)}
             </p>
+            <p className="text-xs text-gray-500 mt-1">Ingresos por ventas − gastos del período</p>
           </div>
         </Card>
 
@@ -498,11 +581,70 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
             <p className="text-sm text-gray-600 mb-1">Consumo por ave/día</p>
             <p className="text-2xl font-bold text-gray-900">{Math.round(gramsPerHenPerDay)} g</p>
             <p className="text-xs text-gray-500 mt-1">
-              Bolsas abiertas: {totalFeedKg.toFixed(2)} kg / {daysForConsumption} días
+              Alimento: {totalFeedKg.toFixed(2)} kg · {periodBounds.dayCount} día(s) del período ·{' '}
+              {hensForConsumption} aves
             </p>
           </div>
         </Card>
       </div>
+
+      <Card padding="md">
+        <h3 className="text-lg font-semibold text-gray-900 mb-2">Resumen Mensual</h3>
+        <p className="text-sm text-gray-600 mb-4">
+          Vista tipo planilla: totales por mes del año {summaryCalendarYear}
+          {currentGallineroId ? ' (gallinero seleccionado)' : ' (toda la organización)'}.
+        </p>
+        {summaryLoading ? (
+          <p className="text-sm text-gray-500">Cargando resumen…</p>
+        ) : (
+          <>
+            <div className="overflow-x-auto rounded-lg border border-gray-200">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 bg-gray-50 text-left">
+                    <th className="px-3 py-2 font-semibold text-gray-700">Mes</th>
+                    <th className="px-3 py-2 font-semibold text-gray-700">Total Huevos</th>
+                    <th className="px-3 py-2 font-semibold text-gray-700">Huevos Vendidos</th>
+                    <th className="px-3 py-2 font-semibold text-gray-700">Neto ($ ventas)</th>
+                    <th className="px-3 py-2 font-semibold text-gray-700">Total ($ ganancia)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {monthlySummaryRows.map((row) => (
+                    <tr key={row.monthLabel} className="border-b border-gray-100">
+                      <td className="px-3 py-2 font-medium text-gray-900">{row.monthLabel}</td>
+                      <td className="px-3 py-2 tabular-nums text-gray-800">{row.totalHuevosMes}</td>
+                      <td className="px-3 py-2 tabular-nums text-gray-800">{row.huevosVendidosMes}</td>
+                      <td className="px-3 py-2 tabular-nums text-gray-800">{formatArs(row.netoMes)}</td>
+                      <td
+                        className={`px-3 py-2 tabular-nums font-medium ${
+                          row.gananciaMes >= 0 ? 'text-green-700' : 'text-red-700'
+                        }`}
+                      >
+                        {formatArs(row.gananciaMes)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-4 grid gap-2 rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-800 sm:grid-cols-3">
+              <p>
+                <span className="font-semibold">Total Huevos {summaryCalendarYear}:</span>{' '}
+                <span className="tabular-nums">{totalHuevosAnual}</span>
+              </p>
+              <p>
+                <span className="font-semibold">Total Ventas {summaryCalendarYear}:</span>{' '}
+                <span className="tabular-nums">{formatArs(totalVentasAnual)}</span>
+              </p>
+              <p>
+                <span className="font-semibold">Precio Promedio por Huevo:</span>{' '}
+                <span className="tabular-nums">{formatArs(precioPromedioHuevoAnual)}</span>
+              </p>
+            </div>
+          </>
+        )}
+      </Card>
     </div>
   );
 }

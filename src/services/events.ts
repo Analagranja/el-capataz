@@ -139,6 +139,38 @@ export const eventsService = {
     return data || [];
   },
 
+  async getAllRange(organizationId: string, fromDate: string, toDate: string): Promise<Event[]> {
+    const { data, error } = await supabase
+      .from('events')
+      .select('*')
+      .eq('organization_id', organizationId)
+      .gte('date', fromDate)
+      .lte('date', toDate)
+      .order('date', { ascending: false });
+
+    if (error) throw error;
+    return data || [];
+  },
+
+  async getByGallineroRange(
+    organizationId: string,
+    gallineroId: string,
+    fromDate: string,
+    toDate: string
+  ): Promise<Event[]> {
+    const { data, error } = await supabase
+      .from('events')
+      .select('*')
+      .eq('organization_id', organizationId)
+      .eq('gallinero_id', gallineroId)
+      .gte('date', fromDate)
+      .lte('date', toDate)
+      .order('date', { ascending: false });
+
+    if (error) throw error;
+    return data || [];
+  },
+
   /**
    * Próximo recordatorio de sanidad pendiente (menor reminder_date entre no completados).
    */

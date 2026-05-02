@@ -9,7 +9,7 @@ import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
 import Modal from '../components/ui/Modal';
 import Table from '../components/ui/Table';
-import { Plus, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { formatArs } from '../utils/formatCurrency';
 
 const LAST_BAG_WEIGHT_KEY = 'gastos_alimento_last_bag_weight_kg';
@@ -37,6 +37,7 @@ export default function Gastos() {
   const [expenses, setExpenses] = React.useState<Expense[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
+  const [editingId, setEditingId] = React.useState<string | null>(null);
   const [formData, setFormData] = React.useState({
     date: new Date().toISOString().split('T')[0],
     description: 'Alimento',
@@ -66,6 +67,7 @@ export default function Gastos() {
 
   const handleCloseModal = () => {
     setIsModalOpen(false);
+    setEditingId(null);
     setFormData({
       date: new Date().toISOString().split('T')[0],
       description: 'Alimento',
@@ -75,6 +77,34 @@ export default function Gastos() {
       bag_weight_kg: getSavedBagWeight(),
       total_price: 0,
     });
+  };
+
+  const openNewExpenseModal = () => {
+    setEditingId(null);
+    setFormData({
+      date: new Date().toISOString().split('T')[0],
+      description: 'Alimento',
+      unit: 'kg',
+      quantity_kg: 0,
+      bags_count: 0,
+      bag_weight_kg: getSavedBagWeight(),
+      total_price: 0,
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleOpenEdit = (expense: Expense) => {
+    setEditingId(expense.id);
+    setFormData({
+      date: expense.date.slice(0, 10),
+      description: expense.description,
+      unit: 'kg',
+      quantity_kg: expense.quantity_kg,
+      bags_count: 0,
+      bag_weight_kg: getSavedBagWeight(),
+      total_price: expense.total_price,
+    });
+    setIsModalOpen(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -89,13 +119,24 @@ export default function Gastos() {
     if (quantityKg <= 0) return;
 
     try {
-      await expensesService.create(
-        organizationId,
-        formData.date,
-        formData.description,
-        quantityKg,
-        formData.total_price
-      );
+      if (editingId) {
+        await expensesService.update(
+          organizationId,
+          editingId,
+          formData.date,
+          formData.description,
+          quantityKg,
+          formData.total_price
+        );
+      } else {
+        await expensesService.create(
+          organizationId,
+          formData.date,
+          formData.description,
+          quantityKg,
+          formData.total_price
+        );
+      }
       if (alimento && formData.unit === 'bolsas' && formData.bag_weight_kg > 0 && typeof window !== 'undefined') {
         window.localStorage.setItem(LAST_BAG_WEIGHT_KEY, String(formData.bag_weight_kg));
       }
@@ -133,7 +174,7 @@ export default function Gastos() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-3xl font-bold text-gray-900">Gastos</h2>
-        <Button variant="primary" onClick={() => setIsModalOpen(true)}>
+        <Button variant="primary" onClick={openNewExpenseModal}>
           <Plus size={20} />
           Nuevo Gasto
         </Button>
@@ -178,10 +219,21 @@ export default function Gastos() {
             {
               key: 'id',
               label: 'Acciones',
-              render: (_, row: Expense) => (
-                <Button variant="danger" size="sm" onClick={() => handleDelete(row.id)}>
-                  <Trash2 size={16} />
-                </Button>
+              render: (_value, row: Expense) => (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    title="Editar gasto"
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-sky-700 shadow-sm transition-colors hover:border-sky-200 hover:bg-sky-50 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-offset-1"
+                    onClick={() => handleOpenEdit(row)}
+                  >
+                    <Pencil className="h-4 w-4" strokeWidth={2} aria-hidden />
+                    <span className="sr-only">Editar</span>
+                  </button>
+                  <Button variant="danger" size="sm" type="button" title="Eliminar gasto" onClick={() => handleDelete(row.id)}>
+                    <Trash2 size={16} aria-hidden />
+                  </Button>
+                </div>
               ),
             },
           ]}
@@ -189,7 +241,7 @@ export default function Gastos() {
         />
       </Card>
 
-      <Modal isOpen={isModalOpen} onClose={handleCloseModal} title="Nuevo Gasto">
+      <Modal isOpen={isModalOpen} onClose={handleCloseModal} title={editingId ? 'Editar Gasto' : 'Nuevo Gasto'}>
         <form onSubmit={handleSubmit} className="space-y-4">
           <Input
             label="Fecha"
@@ -267,7 +319,7 @@ export default function Gastos() {
 
           <div className="flex gap-2 pt-4">
             <Button variant="primary" type="submit" className="flex-1">
-              Guardar
+              {editingId ? 'Guardar cambios' : 'Guardar'}
             </Button>
             <Button variant="secondary" type="button" onClick={handleCloseModal} className="flex-1">
               Cancelar

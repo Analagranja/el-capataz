@@ -93,6 +93,44 @@ export const expensesService = {
     return mapExpenseRow(data as Record<string, unknown>);
   },
 
+  async update(
+    organizationId: string,
+    id: string,
+    date: string,
+    description: string,
+    quantityKg: number,
+    totalPrice: number
+  ): Promise<Expense> {
+    const base = {
+      expense_date: date,
+      description,
+      total_price: totalPrice,
+    };
+
+    let { data, error } = await supabase
+      .from('expenses')
+      .update({ ...base, quantity_kg: quantityKg })
+      .eq('organization_id', organizationId)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (isMissingColumnError(error, 'quantity_kg')) {
+      const retry = await supabase
+        .from('expenses')
+        .update({ ...base, quantity: quantityKg })
+        .eq('organization_id', organizationId)
+        .eq('id', id)
+        .select()
+        .single();
+      data = retry.data;
+      error = retry.error;
+    }
+
+    if (error) throw error;
+    return mapExpenseRow(data as Record<string, unknown>);
+  },
+
   async delete(organizationId: string, id: string): Promise<void> {
     const { error } = await supabase
       .from('expenses')
