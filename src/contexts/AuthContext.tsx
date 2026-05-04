@@ -32,6 +32,26 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+/** Refuerza org + membresía si faltan (p. ej. trigger no aplicó o metadatos vacíos). */
+async function ensureFarmOrganizationFromSession(userId: string) {
+  try {
+    const { data: authData, error: authErr } = await supabase.auth.getUser();
+    if (authErr || !authData.user || authData.user.id !== userId) return;
+
+    const meta = (authData.user.user_metadata ?? {}) as Record<string, unknown>;
+    const inviteRaw = String(meta.invite_code ?? meta.inviteCode ?? '').trim();
+    const inviteNorm = inviteRaw ? inviteRaw.toUpperCase() : '';
+    const farmRaw = String(meta.farm_name ?? meta.farmName ?? '').trim();
+
+    await supabase.rpc('ensure_own_farm_organization', {
+      p_farm_name: inviteNorm ? null : farmRaw || null,
+      p_invite_code: inviteNorm || null,
+    });
+  } catch (e) {
+    console.error('ensure_own_farm_organization:', e);
+  }
+}
+
 // Función auxiliar para buscar la granja
 async function fetchMembership(userId: string) {
   try {
@@ -65,6 +85,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loadOrganization = useCallback(async (userId: string) => {
     try {
+      await ensureFarmOrganizationFromSession(userId);
       const { organizationId: oid, organizationName: oname } = await fetchMembership(userId);
       setOrganizationId(oid);
       setOrganizationName(oname);
@@ -205,6 +226,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         dataPayload.inviteCode = invite;
       } else if (farm) {
         dataPayload.farm_name = farm;
+        dataPayload.farmName = farm;
       }
       const { data, error } = await supabase.auth.signUp({
         email,
@@ -220,6 +242,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       ) {
         err = new Error(inviteInvalidMsg);
       }
+
+      if (!err && data.session && data.user) {
+        const { error: rpcError } = await supabase.rpc('ensure_own_farm_organization', {
+          p_farm_name: invite ? null : farm || null,
+          p_invite_code: invite || null,
+        });
+        if (rpcError) {
+          console.error('ensure_own_farm_organization:', rpcError);
+          err = new Error(
+            rpcError.message ||
+              'Tu cuenta se creó pero no pudimos vincular la granja. Usá «Reintentar» en la pantalla de error o iniciá sesión de nuevo.'
+          );
+        }
+      }
+
       return { error: err, needsEmailConfirmation: !data.session };
     },
     []

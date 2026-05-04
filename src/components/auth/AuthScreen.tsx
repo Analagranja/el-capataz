@@ -50,7 +50,7 @@ export default function AuthScreen() {
         } else {
           setMessage({
             type: 'ok',
-            text: 'Cuenta creada. Ya podés iniciar sesión.',
+            text: 'Cuenta creada. Entrando al panel…',
           });
         }
       }

@@ -1,0 +1,4 @@
+# https://supabase.com/docs/guides/cli/config
+# El webhook de base de datos llama sin JWT de usuario; desactivamos verify_jwt para esta función.
+[functions.notify-new-org]
+verify_jwt = false
