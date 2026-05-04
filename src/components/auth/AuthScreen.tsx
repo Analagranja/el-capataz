@@ -26,8 +26,10 @@ export default function AuthScreen() {
           setMessage({ type: 'err', text: error.message });
         }
       } else {
-        const invite = inviteCode.trim().toUpperCase();
-        if (!invite && !farmName.trim()) {
+        const inviteTrimmed = inviteCode.trim();
+        const inviteOnlyIfTyped =
+          inviteTrimmed.length > 0 ? inviteTrimmed.toUpperCase() : undefined;
+        if (!inviteOnlyIfTyped && !farmName.trim()) {
           setMessage({
             type: 'err',
             text: 'Indicá el nombre de tu granja o un código de invitación para unirte a una existente.',
@@ -37,7 +39,7 @@ export default function AuthScreen() {
         }
         const { error, needsEmailConfirmation } = await signUp(email, password, {
           farmName: farmName.trim(),
-          inviteCode: invite,
+          ...(inviteOnlyIfTyped !== undefined ? { inviteCode: inviteOnlyIfTyped } : {}),
           fullName: fullName.trim(),
         });
         if (error) {

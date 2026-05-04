@@ -233,12 +233,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signUp = useCallback(
     async (email: string, password: string, opts: { farmName?: string; inviteCode?: string; fullName?: string }) => {
-      const invite = (opts.inviteCode?.trim() ?? '').toUpperCase();
+      const inviteRaw = (opts.inviteCode ?? '').trim();
+      const invite = inviteRaw ? inviteRaw.toUpperCase() : '';
       const farm = opts.farmName?.trim() ?? '';
       const fullName = opts.fullName?.trim() ?? '';
       const inviteInvalidMsg = 'Código de invitación inválido';
 
-      if (invite) {
+      if (inviteRaw.length > 0) {
         const { data: inviteOk, error: rpcError } = await supabase.rpc('validate_invite_code', {
           p_code: invite,
         });
@@ -267,13 +268,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         options: { data: dataPayload },
       });
       let err = error ? new Error(error.message) : null;
-      if (
-        err &&
-        /INVITE_CODE_INVALID|invalid_invite_code|P0001|check_violation|23514|Database error saving new user/i.test(
-          err.message
-        )
-      ) {
-        err = new Error(inviteInvalidMsg);
+      if (err) {
+        const msg = err.message;
+        const explicitInviteHint = /INVITE_CODE_INVALID|invalid_invite_code/i.test(msg);
+        const maybeInviteFailureWhileUsingCode =
+          inviteRaw.length > 0 &&
+          /P0001|check_violation|23514|Database error saving new user/i.test(msg);
+        if (explicitInviteHint || maybeInviteFailureWhileUsingCode) {
+          err = new Error(inviteInvalidMsg);
+        }
       }
 
       if (!err && data.session && data.user) {
