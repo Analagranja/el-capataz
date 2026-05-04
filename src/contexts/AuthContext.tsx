@@ -19,6 +19,8 @@ type AuthContextValue = {
   organizationId: string | null;
   organizationName: string | null;
   loading: boolean;
+  /** true después de intentar cargar la org para el usuario de la sesión actual (evita pantalla de error antes del fetch). */
+  organizationResolved: boolean;
   organizationMissing: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (
@@ -34,7 +36,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 /** Refuerza org + membresía si faltan (p. ej. trigger no aplicó o metadatos vacíos). */
 async function ensureFarmOrganizationFromSession(userId: string) {
-  try {
+  const callRpc = async () => {
     const { data: authData, error: authErr } = await supabase.auth.getUser();
     if (authErr || !authData.user || authData.user.id !== userId) return;
 
@@ -43,10 +45,26 @@ async function ensureFarmOrganizationFromSession(userId: string) {
     const inviteNorm = inviteRaw ? inviteRaw.toUpperCase() : '';
     const farmRaw = String(meta.farm_name ?? meta.farmName ?? '').trim();
 
-    await supabase.rpc('ensure_own_farm_organization', {
+    const { error: rpcError } = await supabase.rpc('ensure_own_farm_organization', {
       p_farm_name: inviteNorm ? null : farmRaw || null,
       p_invite_code: inviteNorm || null,
     });
+    return rpcError;
+  };
+
+  try {
+    let rpcError = await callRpc();
+    const msg = rpcError?.message ?? '';
+    if (
+      rpcError &&
+      (/not_authenticated|JWT expired|Invalid JWT/i.test(msg) || rpcError.code === '401')
+    ) {
+      await new Promise((r) => window.setTimeout(r, 150));
+      rpcError = await callRpc();
+    }
+    if (rpcError) {
+      console.error('ensure_own_farm_organization:', rpcError);
+    }
   } catch (e) {
     console.error('ensure_own_farm_organization:', e);
   }
@@ -59,6 +77,7 @@ async function fetchMembership(userId: string) {
       .from('organization_members')
       .select('organization_id, organizations(name)')
       .eq('user_id', userId)
+      .limit(1)
       .maybeSingle();
 
     if (error || !data) return { organizationId: null, organizationName: null };
@@ -82,19 +101,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [organizationMissing, setOrganizationMissing] = useState(false);
   /** Evita aplicar rol de una petición obsoleta (logout, Strict Mode, cambio de usuario). */
   const roleLoadSeq = useRef(0);
+  const orgLoadSeq = useRef(0);
+  const [organizationResolved, setOrganizationResolved] = useState(false);
 
   const loadOrganization = useCallback(async (userId: string) => {
+    const seq = ++orgLoadSeq.current;
+    setOrganizationResolved(false);
     try {
       await ensureFarmOrganizationFromSession(userId);
       const { organizationId: oid, organizationName: oname } = await fetchMembership(userId);
+      if (seq !== orgLoadSeq.current) return;
       setOrganizationId(oid);
       setOrganizationName(oname);
       setOrganizationMissing(!oid);
     } catch (error) {
       console.error('Error loading organization:', error);
+      if (seq !== orgLoadSeq.current) return;
       setOrganizationId(null);
       setOrganizationName(null);
       setOrganizationMissing(true);
+    } finally {
+      if (seq === orgLoadSeq.current) {
+        setOrganizationResolved(true);
+      }
     }
   }, []);
 
@@ -146,10 +175,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         void loadRole(nextSession.user.id);
       } else {
         roleLoadSeq.current += 1;
+        orgLoadSeq.current += 1;
         setRole('admin');
         setOrganizationId(null);
         setOrganizationName(null);
         setOrganizationMissing(false);
+        setOrganizationResolved(false);
       }
     });
 
@@ -180,11 +211,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return;
         console.error('Error getting initial session:', error);
         roleLoadSeq.current += 1;
+        orgLoadSeq.current += 1;
         setSession(null);
         setRole('admin');
         setOrganizationId(null);
         setOrganizationName(null);
         setOrganizationMissing(false);
+        setOrganizationResolved(false);
       }
     };
 
@@ -244,6 +277,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (!err && data.session && data.user) {
+        const { error: setErr } = await supabase.auth.setSession({
+          access_token: data.session.access_token,
+          refresh_token: data.session.refresh_token,
+        });
+        if (setErr) {
+          console.error('setSession after signUp:', setErr);
+        }
         const { error: rpcError } = await supabase.rpc('ensure_own_farm_organization', {
           p_farm_name: invite ? null : farm || null,
           p_invite_code: invite || null,
@@ -275,8 +315,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo(() => ({
     session, user: session?.user ?? null, role, organizationId, organizationName,
-    loading, organizationMissing, signIn, signUp, signOut, refreshOrganization
-  }), [session, role, organizationId, organizationName, loading, organizationMissing, signIn, signUp, signOut, refreshOrganization]);
+    loading, organizationResolved, organizationMissing, signIn, signUp, signOut, refreshOrganization
+  }), [session, role, organizationId, organizationName, loading, organizationResolved, organizationMissing, signIn, signUp, signOut, refreshOrganization]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

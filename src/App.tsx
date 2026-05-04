@@ -89,8 +89,15 @@ function AppShell() {
 }
 
 function App() {
-  const { session, loading, organizationId, organizationMissing, refreshOrganization, signOut } =
-    useAuth();
+  const {
+    session,
+    loading,
+    organizationId,
+    organizationMissing,
+    organizationResolved,
+    refreshOrganization,
+    signOut,
+  } = useAuth();
 
   if (loading) {
     return (
@@ -103,6 +110,15 @@ function App() {
 
   if (!session) {
     return <AuthScreen />;
+  }
+
+  if (!organizationResolved) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-[#1a2f1f] text-lime-100">
+        <Loader2 className="animate-spin text-lime-400" size={40} />
+        <p className="text-sm text-lime-200/80">Conectando con tu granja…</p>
+      </div>
+    );
   }
 
   if (organizationMissing || !organizationId) {
