@@ -31,9 +31,7 @@ import { computeMonthToDateTotals } from '../utils/monthToDateFinance';
 import { boundsForYearMonthFilter, boundsForCalendarYear, todayLocalYmdParts } from '../utils/statsPeriod';
 import { formatArs } from '../utils/formatCurrency';
 
-interface Estadisticas {
-  selectedGallineroId: string | null;
-}
+// TODO: agregar filtro por gallinero en versión futura
 
 const EGGS_PER_SALE_TYPE: Record<Sale['type'], number> = {
   maple: 30,
@@ -56,7 +54,7 @@ const MONTH_NAMES = [
   'Diciembre',
 ] as const;
 
-export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
+export default function Estadisticas() {
   const { organizationId } = useAuth();
   const [gallineros, setGallineros] = React.useState<Gallinero[]>([]);
   const [production, setProduction] = React.useState<ProductionRecord[]>([]);
@@ -71,7 +69,6 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
   const [loading, setLoading] = React.useState(true);
   const [exporting, setExporting] = React.useState(false);
   const [exportError, setExportError] = React.useState('');
-  const [currentGallineroId, setCurrentGallineroId] = React.useState(selectedGallineroId);
   const [selectedYear, setSelectedYear] = React.useState<string>(new Date().getFullYear().toString());
   const [selectedMonth, setSelectedMonth] = React.useState<string>('');
 
@@ -102,17 +99,11 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
       }
 
       const [productionData, salesData, expensesData, eventsData, feedLogsData] = await Promise.all([
-        currentGallineroId
-          ? productionService.getByGallineroRange(organizationId, currentGallineroId, fromY, toY)
-          : productionService.getAllRange(organizationId, fromY, toY),
+        productionService.getAllRange(organizationId, fromY, toY),
         salesService.getAllRange(organizationId, fromY, toY),
         expensesService.getAllRange(organizationId, fromY, toY),
-        currentGallineroId
-          ? eventsService.getByGallineroRange(organizationId, currentGallineroId, fromY, toY)
-          : eventsService.getAllRange(organizationId, fromY, toY),
-        currentGallineroId
-          ? feedLogsService.getByGallineroRange(organizationId, currentGallineroId, fromY, toY)
-          : feedLogsService.getAllRange(organizationId, fromY, toY),
+        eventsService.getAllRange(organizationId, fromY, toY),
+        feedLogsService.getAllRange(organizationId, fromY, toY),
       ]);
 
       setProduction(productionData);
@@ -134,9 +125,7 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
       const sy = new Date().getFullYear();
       const { fromYmd, toYmd } = boundsForCalendarYear(sy);
       const [prod, saleRows, expRows] = await Promise.all([
-        currentGallineroId
-          ? productionService.getByGallineroRange(organizationId, currentGallineroId, fromYmd, toYmd)
-          : productionService.getAllRange(organizationId, fromYmd, toYmd),
+        productionService.getAllRange(organizationId, fromYmd, toYmd),
         salesService.getAllRange(organizationId, fromYmd, toYmd),
         expensesService.getAllRange(organizationId, fromYmd, toYmd),
       ]);
@@ -155,18 +144,12 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
   }, [organizationId]);
 
   React.useEffect(() => {
-    if (selectedGallineroId) {
-      setCurrentGallineroId(selectedGallineroId);
-    }
-  }, [selectedGallineroId]);
-
-  React.useEffect(() => {
     loadData();
-  }, [currentGallineroId, organizationId, selectedYear]);
+  }, [organizationId, selectedYear]);
 
   React.useEffect(() => {
     loadMonthlySummary();
-  }, [currentGallineroId, organizationId]);
+  }, [organizationId]);
 
   const fallbackYearOptions = React.useMemo(() => {
     const y = new Date().getFullYear();
@@ -204,6 +187,20 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
   const filteredEvents = events.filter((e) => dateMatchesFilter(e.date));
   const filteredFeedLogs = feedLogs.filter((f) => dateMatchesFilter(f.date));
 
+  /** Total aves de la organización (todos los gallineros); base para postura y consumo/ave. */
+  const totalFarmHens = gallineros.reduce(
+    (sum, g) => sum + Math.max(0, Math.floor(Number(g.current_count) || 0)),
+    0
+  );
+
+  const eggsByDate = React.useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of filteredProduction) {
+      m.set(p.date, (m.get(p.date) ?? 0) + p.eggs_count);
+    }
+    return m;
+  }, [filteredProduction]);
+
   const monthOptions = [
     { value: '', label: 'Todos los meses' },
     { value: '01', label: 'Enero' },
@@ -224,17 +221,12 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
     return <div className="p-8 text-center text-gray-500">Cargando...</div>;
   }
 
-  const getRecordHens = (record: ProductionRecord) =>
-    record.poultry_count && record.poultry_count > 0
-      ? record.poultry_count
-      : gallineros.find((g) => g.id === record.gallinero_id)?.current_count ?? 0;
-
-  const productionChartData = filteredProduction
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .map((p) => ({
-      date: p.date,
-      huevos: p.eggs_count,
-      postura: parseFloat(computeLayingPercentage(p.eggs_count, getRecordHens(p)).toFixed(1)),
+  const productionChartData = Array.from(eggsByDate.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, huevos]) => ({
+      date,
+      huevos,
+      postura: parseFloat(computeLayingPercentage(huevos, totalFarmHens).toFixed(1)),
     }));
 
   const salesByType = [
@@ -293,12 +285,12 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
   const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
   const totalEggsProduced = filteredProduction.reduce((sum, p) => sum + p.eggs_count, 0);
+  const dailyLayingPercentages = Array.from(eggsByDate.values()).map((eggs) =>
+    computeLayingPercentage(eggs, totalFarmHens)
+  );
   const avgLayingPercentage =
-    filteredProduction.length > 0
-      ? filteredProduction.reduce(
-          (sum, p) => sum + computeLayingPercentage(p.eggs_count, getRecordHens(p)),
-          0
-        ) / filteredProduction.length
+    dailyLayingPercentages.length > 0
+      ? dailyLayingPercentages.reduce((sum, pct) => sum + pct, 0) / dailyLayingPercentages.length
       : 0;
   const totalEggsSold = filteredSales.reduce((sum, sale) => {
     const eggsByType = EGGS_PER_SALE_TYPE[sale.type] || 0;
@@ -314,12 +306,9 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
     periodBounds.toYmd
   );
   const totalFeedKg = filteredFeedLogs.reduce((sum, f) => sum + (f.kg_opened || 0), 0);
-  const hensForConsumption = currentGallineroId
-    ? gallineros.find((g) => g.id === currentGallineroId)?.current_count ?? 0
-    : gallineros.reduce((sum, g) => sum + g.current_count, 0);
   const gramsPerHenPerDay =
-    hensForConsumption > 0 && totalFeedKg > 0 && periodBounds.dayCount > 0
-      ? (totalFeedKg * 1000) / (hensForConsumption * periodBounds.dayCount)
+    totalFarmHens > 0 && totalFeedKg > 0 && periodBounds.dayCount > 0
+      ? (totalFeedKg * 1000) / (totalFarmHens * periodBounds.dayCount)
       : 0;
 
   const summaryCalendarYear = new Date().getFullYear();
@@ -352,14 +341,6 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
   const precioPromedioHuevoAnual =
     totalHuevosVendidosAnual > 0 ? totalVentasAnual / totalHuevosVendidosAnual : 0;
 
-  const gallineroOptions = [
-    { value: '', label: 'Todos los Gallineros' },
-    ...gallineros.map((g) => ({
-      value: g.id,
-      label: `${g.name} (${g.current_count} gallinas)`,
-    })),
-  ];
-
   const handleExportData = async () => {
     if (!organizationId) return;
     setExportError('');
@@ -376,9 +357,7 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
 
       const [saleRows, prodRows, expenseRows] = await Promise.all([
         salesService.getAllRange(organizationId, from, to),
-        currentGallineroId
-          ? productionService.getByGallineroRange(organizationId, currentGallineroId, from, to)
-          : productionService.getAllRange(organizationId, from, to),
+        productionService.getAllRange(organizationId, from, to),
         expensesService.getAllRange(organizationId, from, to),
       ]);
 
@@ -416,30 +395,22 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
       </div>
       {exportError ? <p className="text-sm text-red-600">{exportError}</p> : null}
 
-      {gallineros.length > 0 && (
-        <Card padding="md">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Select
-              label="Filtrar por Gallinero"
-              options={gallineroOptions}
-              value={currentGallineroId || ''}
-              onChange={(e) => setCurrentGallineroId(e.target.value || null)}
-            />
-            <Select
-              label="Año"
-              options={yearOptions}
-              value={activeYear}
-              onChange={(e) => setSelectedYear(e.target.value)}
-            />
-            <Select
-              label="Mes"
-              options={monthOptions}
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
-            />
-          </div>
-        </Card>
-      )}
+      <Card padding="md">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Select
+            label="Año"
+            options={yearOptions}
+            value={activeYear}
+            onChange={(e) => setSelectedYear(e.target.value)}
+          />
+          <Select
+            label="Mes"
+            options={monthOptions}
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+          />
+        </div>
+      </Card>
 
       {productionChartData.length > 0 && (
         <Card padding="md">
@@ -582,7 +553,7 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
             <p className="text-2xl font-bold text-gray-900">{Math.round(gramsPerHenPerDay)} g</p>
             <p className="text-xs text-gray-500 mt-1">
               Alimento: {totalFeedKg.toFixed(2)} kg · {periodBounds.dayCount} día(s) del período ·{' '}
-              {hensForConsumption} aves
+              {totalFarmHens} aves (toda la granja)
             </p>
           </div>
         </Card>
@@ -591,8 +562,7 @@ export default function Estadisticas({ selectedGallineroId }: Estadisticas) {
       <Card padding="md">
         <h3 className="text-lg font-semibold text-gray-900 mb-2">Resumen Mensual</h3>
         <p className="text-sm text-gray-600 mb-4">
-          Vista tipo planilla: totales por mes del año {summaryCalendarYear}
-          {currentGallineroId ? ' (gallinero seleccionado)' : ' (toda la organización)'}.
+          Vista tipo planilla: totales por mes del año {summaryCalendarYear} (toda la organización).
         </p>
         {summaryLoading ? (
           <p className="text-sm text-gray-500">Cargando resumen…</p>

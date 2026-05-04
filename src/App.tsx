@@ -65,7 +65,7 @@ function AppShell() {
       case 'eventos':
         return <Eventos {...pageProps} />;
       case 'estadisticas':
-        return <Estadisticas {...pageProps} />;
+        return <Estadisticas />;
       case 'configuracion':
         return <Configuracion />;
       default:
