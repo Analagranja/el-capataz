@@ -38,7 +38,7 @@ function showMenuItemForRole(pageId: Page, userRole: UserRole): boolean {
     return !['ventas', 'clientes', 'gastos', 'estadisticas', 'configuracion'].includes(pageId);
   }
   if (userRole === 'vendedor') {
-    return !['gastos', 'configuracion'].includes(pageId);
+    return !['gastos', 'estadisticas', 'configuracion'].includes(pageId);
   }
   return true;
 }

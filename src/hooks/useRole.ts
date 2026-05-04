@@ -12,7 +12,7 @@ const OPERATOR_BLOCKED_PAGES: Page[] = [
   'estadisticas',
   'configuracion',
 ];
-const VENDEDOR_BLOCKED_PAGES: Page[] = ['gastos', 'configuracion'];
+const VENDEDOR_BLOCKED_PAGES: Page[] = ['gastos', 'estadisticas', 'configuracion'];
 
 function readRoleOverride(): UserRole | null {
   if (typeof window === 'undefined') return null;
