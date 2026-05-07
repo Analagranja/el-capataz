@@ -14,6 +14,13 @@ const SALE_TYPE_LABEL: Record<Sale['type'], string> = {
   media_docena: 'Media docena',
 };
 
+/** Equivalente en huevos por unidad vendida (maple/docena/media docena). */
+const EGGS_PER_SALE_TYPE: Record<Sale['type'], number> = {
+  maple: 30,
+  docena: 12,
+  media_docena: 6,
+};
+
 const MONTH_NAMES_ES = [
   'Enero',
   'Febrero',
@@ -87,21 +94,37 @@ function monthLabelEs(ym: string): string {
   return `${MONTH_NAMES_ES[m - 1]} ${y}`;
 }
 
+function eggsSoldAsUnits(sale: Sale): number {
+  const perPack = EGGS_PER_SALE_TYPE[sale.type] ?? 0;
+  return safeMoney(sale.quantity) * perPack;
+}
+
 function buildMonthlySummaryRows(
   sales: Sale[],
   production: ProductionRecord[],
   expenses: Expense[],
   fromYmd: string,
   toYmd: string
-): Array<{ ym: string; label: string; huevos: number; ventas: number; gastos: number; ganancia: number }> {
+): Array<{
+  ym: string;
+  label: string;
+  huevos: number;
+  huevosVendidos: number;
+  precioPromedioHuevo: number;
+  ventas: number;
+  gastos: number;
+  ganancia: number;
+}> {
   const months = collectMonthsWithActivity(sales, production, expenses, fromYmd, toYmd);
   return months.map((ym) => {
     const huevos = production
       .filter((p) => p.date.startsWith(ym))
       .reduce((sum, p) => sum + safeMoney(p.eggs_count), 0);
-    const ventas = sales
-      .filter((s) => s.date.startsWith(ym))
-      .reduce((sum, s) => sum + safeMoney(s.total_price), 0);
+    const monthSales = sales.filter((s) => s.date.startsWith(ym));
+    const ventas = monthSales.reduce((sum, s) => sum + safeMoney(s.total_price), 0);
+    const huevosVendidos = monthSales.reduce((sum, s) => sum + eggsSoldAsUnits(s), 0);
+    const precioPromedioHuevo =
+      huevosVendidos > 0 && Number.isFinite(ventas) ? ventas / huevosVendidos : 0;
     const gastos = expenses
       .filter((e) => e.date.startsWith(ym))
       .reduce((sum, e) => sum + safeMoney(e.total_price), 0);
@@ -110,6 +133,8 @@ function buildMonthlySummaryRows(
       ym,
       label: monthLabelEs(ym),
       huevos,
+      huevosVendidos,
+      precioPromedioHuevo: Number.isFinite(precioPromedioHuevo) ? precioPromedioHuevo : 0,
       ventas,
       gastos,
       ganancia: Number.isFinite(ganancia) ? ganancia : 0,
@@ -149,24 +174,27 @@ export function downloadSalesAndProductionExcel(options: {
 
   const monthlyRows = buildMonthlySummaryRows(sales, production, expenses, fromLabel, toLabel);
   const totalHuevos = monthlyRows.reduce((s, r) => s + r.huevos, 0);
+  const totalHuevosVendidos = monthlyRows.reduce((s, r) => s + r.huevosVendidos, 0);
   const totalVentas = monthlyRows.reduce((s, r) => s + r.ventas, 0);
   const totalGastos = monthlyRows.reduce((s, r) => s + r.gastos, 0);
   const totalGanancia = monthlyRows.reduce((s, r) => s + r.ganancia, 0);
+  const precioPromedioHuevoAcumulado =
+    totalHuevosVendidos > 0 && Number.isFinite(totalVentas) ? totalVentas / totalHuevosVendidos : 0;
 
   const monthlyBody =
     monthlyRows.length === 0
-      ? '<tr><td colspan="5">Sin meses con datos en el rango (no hay producción, ventas ni gastos registrados).</td></tr>'
+      ? '<tr><td colspan="7">Sin meses con datos en el rango (no hay producción, ventas ni gastos registrados).</td></tr>'
       : monthlyRows
           .map(
             (r) =>
-              `<tr><td>${escapeHtml(r.label)}</td><td>${r.huevos}</td><td ${TD_MONEY}>${r.ventas}</td><td ${TD_MONEY}>${r.gastos}</td><td ${TD_MONEY}>${r.ganancia}</td></tr>`
+              `<tr><td>${escapeHtml(r.label)}</td><td>${r.huevos}</td><td>${r.huevosVendidos}</td><td ${TD_MONEY}>${r.precioPromedioHuevo}</td><td ${TD_MONEY}>${r.ventas}</td><td ${TD_MONEY}>${r.gastos}</td><td ${TD_MONEY}>${r.ganancia}</td></tr>`
           )
           .join('');
 
   const totalRow =
     monthlyRows.length === 0
       ? ''
-      : `<tr style="font-weight:bold;background-color:#f3f4f6;"><td>Total Acumulado</td><td>${totalHuevos}</td><td ${TD_MONEY}>${totalVentas}</td><td ${TD_MONEY}>${totalGastos}</td><td ${TD_MONEY}>${totalGanancia}</td></tr>`;
+      : `<tr style="font-weight:bold;background-color:#f3f4f6;"><td>Total Acumulado</td><td>${totalHuevos}</td><td>${totalHuevosVendidos}</td><td ${TD_MONEY}>${precioPromedioHuevoAcumulado}</td><td ${TD_MONEY}>${totalVentas}</td><td ${TD_MONEY}>${totalGastos}</td><td ${TD_MONEY}>${totalGanancia}</td></tr>`;
 
   const html = `<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
@@ -189,12 +217,14 @@ export function downloadSalesAndProductionExcel(options: {
   </table>
   <br/><br/>
   <h2>Resumen Mensual</h2>
-  <p style="font-size:11px;color:#555;">Período: ${escapeHtml(fromLabel)} a ${escapeHtml(toLabel)}. Solo se listan meses con al menos un registro de producción, ventas o gastos. <strong>Ganancia ($)</strong> = ventas del mes − gastos del mes.</p>
+  <p style="font-size:11px;color:#555;">Período: ${escapeHtml(fromLabel)} a ${escapeHtml(toLabel)}. Solo se listan meses con al menos un registro de producción, ventas o gastos. <strong>Total Huevos Vendidos</strong> suma el equivalente en huevos (Maple 30, Docena 12, Media docena 6 por unidad vendida). <strong>Precio Promedio por Huevo</strong> = Total Ventas del mes ÷ Total Huevos Vendidos. <strong>Ganancia ($)</strong> = ventas del mes − gastos del mes.</p>
   <table border="1" cellspacing="0" cellpadding="4">
     <thead>
       <tr>
         <th>Mes</th>
         <th>Total Huevos del mes</th>
+        <th>Total Huevos Vendidos</th>
+        <th>Precio Promedio por Huevo</th>
         <th>Total Ventas del mes</th>
         <th>Total Gastos del mes</th>
         <th>Ganancia ($)</th>
