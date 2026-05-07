@@ -64,14 +64,14 @@ function averagePricePerEgg(totalVentasPeriod: number, huevosVendidosUnits: numb
 }
 
 /**
- * Celda de moneda para Excel HTML: valor explícitamente numérico (`x:num`) + mismo formato que el resto (`TD_MONEY`).
- * Evita que Excel interprete mal el número al abrir el .xls exportado.
+ * Celda monetaria con 2 decimales: mismo patrón que "Total Ventas" (`TD_MONEY` + número en el texto).
+ * No usar `x:num`/`sdval` aquí: en Excel en español (es-AR) un valor como "305.90" en `x:num` puede leerse
+ * como miles + decimales y terminar en números de orden ~10^15.
  */
 function excelCurrency2DecimalsTd(value: number): string {
   const n = roundMoney2(value);
   const text = n.toFixed(2);
-  /* x:num + sdval: Excel (sobre todo en locale es-AR) interpreta bien el número; no concatenar ni multiplicar. */
-  return `<td align="right" lang="en-US" x:num="${text}" sdval="${text}" ${TD_MONEY}>${text}</td>`;
+  return `<td align="right" ${TD_MONEY}>${text}</td>`;
 }
 
 function ymFromYmd(ymd: string): string | null {
@@ -246,7 +246,7 @@ export function downloadSalesAndProductionExcel(options: {
   <br/><br/>
   <h2>Resumen Mensual</h2>
   <p style="font-size:11px;color:#555;">Período: ${escapeHtml(fromLabel)} a ${escapeHtml(toLabel)}. Solo se listan meses con al menos un registro de producción, ventas o gastos. <strong>Total Huevos Vendidos</strong> suma el equivalente en huevos (Maple 30, Docena 12, Media docena 6 por unidad vendida). <strong>Precio Promedio por Huevo</strong> = Total Ventas del mes ÷ Total Huevos Vendidos. <strong>Ganancia ($)</strong> = ventas del mes − gastos del mes.</p>
-  <table border="1" cellspacing="0" cellpadding="4" lang="en-US">
+  <table border="1" cellspacing="0" cellpadding="4">
     <thead>
       <tr>
         <th>Mes</th>
