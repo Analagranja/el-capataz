@@ -44,6 +44,36 @@ function safeMoney(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Dos decimales para montos y promedios exportados a Excel. */
+function roundMoney2(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * 100) / 100;
+}
+
+/**
+ * Precio promedio por huevo = Total Ventas del período ÷ Total Huevos Vendidos (equivalente en unidades).
+ * Solo división; sin factores extra. Si no hay huevos vendidos → 0 (evita división por cero).
+ */
+function averagePricePerEgg(totalVentasPeriod: number, huevosVendidosUnits: number): number {
+  const ventas = safeMoney(totalVentasPeriod);
+  const huevos = safeMoney(huevosVendidosUnits);
+  if (!(huevos > 0)) return 0;
+  const raw = ventas / huevos;
+  if (!Number.isFinite(raw)) return 0;
+  return roundMoney2(raw);
+}
+
+/**
+ * Celda de moneda para Excel HTML: valor explícitamente numérico (`x:num`) + mismo formato que el resto (`TD_MONEY`).
+ * Evita que Excel interprete mal el número al abrir el .xls exportado.
+ */
+function excelCurrency2DecimalsTd(value: number): string {
+  const n = roundMoney2(value);
+  const text = n.toFixed(2);
+  /* x:num + sdval: Excel (sobre todo en locale es-AR) interpreta bien el número; no concatenar ni multiplicar. */
+  return `<td align="right" lang="en-US" x:num="${text}" sdval="${text}" ${TD_MONEY}>${text}</td>`;
+}
+
 function ymFromYmd(ymd: string): string | null {
   const d = String(ymd || '').trim().slice(0, 10);
   if (d.length < 7) return null;
@@ -123,8 +153,7 @@ function buildMonthlySummaryRows(
     const monthSales = sales.filter((s) => s.date.startsWith(ym));
     const ventas = monthSales.reduce((sum, s) => sum + safeMoney(s.total_price), 0);
     const huevosVendidos = monthSales.reduce((sum, s) => sum + eggsSoldAsUnits(s), 0);
-    const precioPromedioHuevo =
-      huevosVendidos > 0 && Number.isFinite(ventas) ? ventas / huevosVendidos : 0;
+    const precioPromedioHuevo = averagePricePerEgg(ventas, huevosVendidos);
     const gastos = expenses
       .filter((e) => e.date.startsWith(ym))
       .reduce((sum, e) => sum + safeMoney(e.total_price), 0);
@@ -134,7 +163,7 @@ function buildMonthlySummaryRows(
       label: monthLabelEs(ym),
       huevos,
       huevosVendidos,
-      precioPromedioHuevo: Number.isFinite(precioPromedioHuevo) ? precioPromedioHuevo : 0,
+      precioPromedioHuevo,
       ventas,
       gastos,
       ganancia: Number.isFinite(ganancia) ? ganancia : 0,
@@ -178,8 +207,7 @@ export function downloadSalesAndProductionExcel(options: {
   const totalVentas = monthlyRows.reduce((s, r) => s + r.ventas, 0);
   const totalGastos = monthlyRows.reduce((s, r) => s + r.gastos, 0);
   const totalGanancia = monthlyRows.reduce((s, r) => s + r.ganancia, 0);
-  const precioPromedioHuevoAcumulado =
-    totalHuevosVendidos > 0 && Number.isFinite(totalVentas) ? totalVentas / totalHuevosVendidos : 0;
+  const precioPromedioHuevoAcumulado = averagePricePerEgg(totalVentas, totalHuevosVendidos);
 
   const monthlyBody =
     monthlyRows.length === 0
@@ -187,14 +215,14 @@ export function downloadSalesAndProductionExcel(options: {
       : monthlyRows
           .map(
             (r) =>
-              `<tr><td>${escapeHtml(r.label)}</td><td>${r.huevos}</td><td>${r.huevosVendidos}</td><td ${TD_MONEY}>${r.precioPromedioHuevo}</td><td ${TD_MONEY}>${r.ventas}</td><td ${TD_MONEY}>${r.gastos}</td><td ${TD_MONEY}>${r.ganancia}</td></tr>`
+              `<tr><td>${escapeHtml(r.label)}</td><td>${r.huevos}</td><td>${r.huevosVendidos}</td>${excelCurrency2DecimalsTd(r.precioPromedioHuevo)}<td ${TD_MONEY}>${r.ventas}</td><td ${TD_MONEY}>${r.gastos}</td><td ${TD_MONEY}>${r.ganancia}</td></tr>`
           )
           .join('');
 
   const totalRow =
     monthlyRows.length === 0
       ? ''
-      : `<tr style="font-weight:bold;background-color:#f3f4f6;"><td>Total Acumulado</td><td>${totalHuevos}</td><td>${totalHuevosVendidos}</td><td ${TD_MONEY}>${precioPromedioHuevoAcumulado}</td><td ${TD_MONEY}>${totalVentas}</td><td ${TD_MONEY}>${totalGastos}</td><td ${TD_MONEY}>${totalGanancia}</td></tr>`;
+      : `<tr style="font-weight:bold;background-color:#f3f4f6;"><td>Total Acumulado</td><td>${totalHuevos}</td><td>${totalHuevosVendidos}</td>${excelCurrency2DecimalsTd(precioPromedioHuevoAcumulado)}<td ${TD_MONEY}>${totalVentas}</td><td ${TD_MONEY}>${totalGastos}</td><td ${TD_MONEY}>${totalGanancia}</td></tr>`;
 
   const html = `<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
@@ -218,7 +246,7 @@ export function downloadSalesAndProductionExcel(options: {
   <br/><br/>
   <h2>Resumen Mensual</h2>
   <p style="font-size:11px;color:#555;">Período: ${escapeHtml(fromLabel)} a ${escapeHtml(toLabel)}. Solo se listan meses con al menos un registro de producción, ventas o gastos. <strong>Total Huevos Vendidos</strong> suma el equivalente en huevos (Maple 30, Docena 12, Media docena 6 por unidad vendida). <strong>Precio Promedio por Huevo</strong> = Total Ventas del mes ÷ Total Huevos Vendidos. <strong>Ganancia ($)</strong> = ventas del mes − gastos del mes.</p>
-  <table border="1" cellspacing="0" cellpadding="4">
+  <table border="1" cellspacing="0" cellpadding="4" lang="en-US">
     <thead>
       <tr>
         <th>Mes</th>
