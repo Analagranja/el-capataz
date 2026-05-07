@@ -11,6 +11,7 @@ import Modal from '../components/ui/Modal';
 import Table from '../components/ui/Table';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { formatArs } from '../utils/formatCurrency';
+import { currentMonthStartLocalYmd, todayLocalYmd } from '../utils/monthToDateFinance';
 
 const LAST_BAG_WEIGHT_KEY = 'gastos_alimento_last_bag_weight_kg';
 
@@ -45,6 +46,7 @@ export default function Gastos() {
     quantity_kg: 0,
     bags_count: 0,
     bag_weight_kg: getSavedBagWeight(),
+    bag_price: 0,
     total_price: 0,
   });
 
@@ -52,7 +54,9 @@ export default function Gastos() {
     if (!organizationId) return;
     try {
       setLoading(true);
-      const data = await expensesService.getAll(organizationId, 90);
+      const monthStartYmd = currentMonthStartLocalYmd();
+      const todayYmd = todayLocalYmd();
+      const data = await expensesService.getAllRange(organizationId, monthStartYmd, todayYmd);
       setExpenses(data);
     } catch (error) {
       console.error('Error loading expenses:', error);
@@ -75,6 +79,7 @@ export default function Gastos() {
       quantity_kg: 0,
       bags_count: 0,
       bag_weight_kg: getSavedBagWeight(),
+      bag_price: 0,
       total_price: 0,
     });
   };
@@ -88,6 +93,7 @@ export default function Gastos() {
       quantity_kg: 0,
       bags_count: 0,
       bag_weight_kg: getSavedBagWeight(),
+      bag_price: 0,
       total_price: 0,
     });
     setIsModalOpen(true);
@@ -102,6 +108,7 @@ export default function Gastos() {
       quantity_kg: expense.quantity_kg,
       bags_count: 0,
       bag_weight_kg: getSavedBagWeight(),
+      bag_price: 0,
       total_price: expense.total_price,
     });
     setIsModalOpen(true);
@@ -118,6 +125,11 @@ export default function Gastos() {
 
     if (quantityKg <= 0) return;
 
+    const computedTotalPrice =
+      alimento && formData.unit === 'bolsas'
+        ? (formData.bags_count || 0) * (formData.bag_price || 0)
+        : formData.total_price;
+
     try {
       if (editingId) {
         await expensesService.update(
@@ -126,7 +138,7 @@ export default function Gastos() {
           formData.date,
           formData.description,
           quantityKg,
-          formData.total_price
+          computedTotalPrice
         );
       } else {
         await expensesService.create(
@@ -134,7 +146,7 @@ export default function Gastos() {
           formData.date,
           formData.description,
           quantityKg,
-          formData.total_price
+          computedTotalPrice
         );
       }
       if (alimento && formData.unit === 'bolsas' && formData.bag_weight_kg > 0 && typeof window !== 'undefined') {
@@ -165,6 +177,7 @@ export default function Gastos() {
   const totalKg = expenses.reduce((sum, e) => sum + e.quantity_kg, 0);
   const isAlimentoForm = isAlimento(formData.description);
   const kilosFromBags = (formData.bags_count || 0) * (formData.bag_weight_kg || 0);
+  const totalFromBagsPrice = (formData.bags_count || 0) * (formData.bag_price || 0);
 
   if (loading) {
     return <div className="p-8 text-center text-gray-500">Cargando...</div>;
@@ -186,7 +199,7 @@ export default function Gastos() {
           <p className="text-2xl font-bold text-gray-900">{totalKg.toFixed(2)}</p>
         </Card>
         <Card padding="md" hover>
-          <p className="text-sm text-gray-600 mb-1">Total Gastado</p>
+          <p className="text-sm text-gray-600 mb-1">Total invertido este mes</p>
           <p className="text-2xl font-bold text-gray-900">{formatArs(totalExpenses)}</p>
         </Card>
         <Card padding="md" hover>
@@ -213,7 +226,7 @@ export default function Gastos() {
             },
             {
               key: 'total_price',
-              label: 'Precio Total',
+              label: 'Total',
               render: (value) => formatArs(value as number),
             },
             {
@@ -283,6 +296,15 @@ export default function Gastos() {
                 required
               />
               <Input
+                label="Precio por bolsa"
+                type="number"
+                step="0.01"
+                min="0"
+                value={formData.bag_price}
+                onChange={(e) => setFormData({ ...formData, bag_price: parseFloat(e.target.value) || 0 })}
+                required
+              />
+              <Input
                 label="Peso por bolsa (kg)"
                 type="number"
                 step="0.01"
@@ -294,6 +316,9 @@ export default function Gastos() {
               />
               <div className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">
                 Kilos totales calculados automáticamente: <strong>{kilosFromBags.toFixed(2)} kg</strong>
+              </div>
+              <div className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">
+                Total calculado automáticamente: <strong>{formatArs(totalFromBagsPrice)}</strong>
               </div>
             </>
           ) : (
@@ -308,14 +333,27 @@ export default function Gastos() {
             />
           )}
 
-          <Input
-            label="Precio Total"
-            type="number"
-            step="0.01"
-            value={formData.total_price}
-            onChange={(e) => setFormData({ ...formData, total_price: parseFloat(e.target.value) || 0 })}
-            required
-          />
+          {isAlimentoForm && formData.unit === 'bolsas' ? (
+            <Input
+              label="Total"
+              type="number"
+              step="0.01"
+              value={Number.isFinite(totalFromBagsPrice) ? totalFromBagsPrice : 0}
+              onChange={() => {}}
+              helperText="Se calcula como Cantidad de bolsas × Precio por bolsa."
+              required
+              disabled
+            />
+          ) : (
+            <Input
+              label="Total"
+              type="number"
+              step="0.01"
+              value={formData.total_price}
+              onChange={(e) => setFormData({ ...formData, total_price: parseFloat(e.target.value) || 0 })}
+              required
+            />
+          )}
 
           <div className="flex gap-2 pt-4">
             <Button variant="primary" type="submit" className="flex-1">
