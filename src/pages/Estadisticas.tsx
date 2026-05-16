@@ -346,19 +346,28 @@ export default function Estadisticas() {
     setExportError('');
     setExporting(true);
     try {
-      const pad = (n: number) => String(n).padStart(2, '0');
-      const toYmd = (d: Date) =>
-        `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-      const endD = new Date();
-      const startD = new Date();
-      startD.setDate(startD.getDate() - 730);
-      const from = toYmd(startD);
-      const to = toYmd(endD);
+      const detail = boundsForYearMonthFilter(activeYear, selectedMonth);
+      if (detail.fromYmd > detail.toYmd) {
+        setExportError('No hay datos para exportar en el período seleccionado.');
+        return;
+      }
 
-      const [saleRows, prodRows, expenseRows] = await Promise.all([
-        salesService.getAllRange(organizationId, from, to),
-        productionService.getAllRange(organizationId, from, to),
-        expensesService.getAllRange(organizationId, from, to),
+      const summary = boundsForYearMonthFilter(activeYear, '');
+
+      const [
+        saleRows,
+        prodRows,
+        expenseRows,
+        saleSummaryRows,
+        prodSummaryRows,
+        expenseSummaryRows,
+      ] = await Promise.all([
+        salesService.getAllRange(organizationId, detail.fromYmd, detail.toYmd),
+        productionService.getAllRange(organizationId, detail.fromYmd, detail.toYmd),
+        expensesService.getAllRange(organizationId, detail.fromYmd, detail.toYmd),
+        salesService.getAllRange(organizationId, summary.fromYmd, summary.toYmd),
+        productionService.getAllRange(organizationId, summary.fromYmd, summary.toYmd),
+        expensesService.getAllRange(organizationId, summary.fromYmd, summary.toYmd),
       ]);
 
       const gallineroNameById = new Map(gallineros.map((g) => [g.id, g.name]));
@@ -366,9 +375,13 @@ export default function Estadisticas() {
         sales: saleRows,
         production: prodRows,
         expenses: expenseRows,
+        summarySales: saleSummaryRows,
+        summaryProduction: prodSummaryRows,
+        summaryExpenses: expenseSummaryRows,
+        summaryYear: activeYear,
         gallineroNameById,
-        fromLabel: from,
-        toLabel: to,
+        fromLabel: detail.fromYmd,
+        toLabel: detail.toYmd,
       });
     } catch (err) {
       console.error('Export error:', err);

@@ -87,12 +87,19 @@ export interface Expense {
   created_at: string;
 }
 
+export type FeedLogTipo = 'bolsas' | 'granel';
+
 export interface FeedLog {
   id: string;
   organization_id: string;
   gallinero_id: string;
   date: string;
   kg_opened: number;
+  tipo: FeedLogTipo;
+  /** Solo si tipo === 'bolsas'; trazabilidad */
+  cantidad_bolsas?: number | null;
+  /** Solo si tipo === 'bolsas'; trazabilidad */
+  kg_por_bolsa?: number | null;
   created_at: string;
 }
 

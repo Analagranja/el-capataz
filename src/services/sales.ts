@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { Sale } from '../types';
+import { addOneLocalCalendarDayYmd } from '../utils/statsPeriod';
 
 type SaleType = 'maple' | 'docena' | 'media_docena';
 
@@ -51,12 +52,13 @@ export const salesService = {
   },
 
   async getAllRange(organizationId: string, fromDate: string, toDate: string): Promise<Sale[]> {
+    const toExclusive = addOneLocalCalendarDayYmd(toDate);
     const { data, error } = await supabase
       .from('sales')
       .select('id, organization_id, customer_id, sale_date, sale_type, quantity, unit_price, total_price, notes, created_at, customers(name)')
       .eq('organization_id', organizationId)
       .gte('sale_date', fromDate)
-      .lte('sale_date', toDate)
+      .lt('sale_date', toExclusive)
       .order('sale_date', { ascending: false });
 
     if (error) throw error;

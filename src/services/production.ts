@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { ProductionRecord } from '../types';
+import { addOneLocalCalendarDayYmd } from '../utils/statsPeriod';
 
 /** `production_records.date` es tipo `date` en Postgres: solo YYYY-MM-DD, sin hora. */
 export function productionFormDateToDbDate(ymd: string): string {
@@ -72,13 +73,14 @@ export const productionService = {
     fromDate: string,
     toDate: string
   ): Promise<ProductionRecord[]> {
+    const toExclusive = addOneLocalCalendarDayYmd(toDate);
     const { data, error } = await supabase
       .from('production_records')
       .select('*')
       .eq('organization_id', organizationId)
       .eq('gallinero_id', gallineroId)
       .gte('date', fromDate)
-      .lte('date', toDate)
+      .lt('date', toExclusive)
       .order('date', { ascending: false });
 
     if (error) throw error;
@@ -105,12 +107,13 @@ export const productionService = {
     fromDate: string,
     toDate: string
   ): Promise<ProductionRecord[]> {
+    const toExclusive = addOneLocalCalendarDayYmd(toDate);
     const { data, error } = await supabase
       .from('production_records')
       .select('*')
       .eq('organization_id', organizationId)
       .gte('date', fromDate)
-      .lte('date', toDate)
+      .lt('date', toExclusive)
       .order('date', { ascending: false });
 
     if (error) throw error;

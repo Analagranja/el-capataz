@@ -11,6 +11,27 @@ export function todayLocalYmdParts(now: Date = new Date()): { y: number; m: numb
   return { y, m, d, ymd: ymdFromParts(y, m, d) };
 }
 
+/**
+ * Día calendario local siguiente a `ymd` (prefijo YYYY-MM-DD).
+ * Sirve para consultas `col >= fromYmd AND col < addOneLocalCalendarDayYmd(toYmd)` e incluir
+ * todo el último día aunque la columna sea `timestamp`/`timestamptz`.
+ */
+export function addOneLocalCalendarDayYmd(ymd: string): string {
+  const head = String(ymd ?? '')
+    .trim()
+    .slice(0, 10);
+  const [ys, ms, ds] = head.split('-');
+  const y = Number(ys);
+  const mo = Number(ms);
+  const d = Number(ds);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) {
+    throw new Error(`addOneLocalCalendarDayYmd: fecha inválida (${ymd})`);
+  }
+  const dt = new Date(y, mo - 1, d);
+  dt.setDate(dt.getDate() + 1);
+  return ymdFromParts(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
+}
+
 /** Días inclusivos entre dos fechas locales YYYY-MM-DD (mismo día → 1). */
 export function inclusiveLocalDaysBetween(fromYmd: string, toYmd: string): number {
   const [fy, fm, fd] = fromYmd.slice(0, 10).split('-').map(Number);

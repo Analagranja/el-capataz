@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { Expense } from '../types';
+import { addOneLocalCalendarDayYmd } from '../utils/statsPeriod';
 
 function mapExpenseRow(row: Record<string, unknown>): Expense {
   const expenseDate =
@@ -46,12 +47,13 @@ export const expensesService = {
 
   /** Gastos de la organización entre dos fechas (YYYY-MM-DD), por `expense_date`. */
   async getAllRange(organizationId: string, fromDate: string, toDate: string): Promise<Expense[]> {
+    const toExclusive = addOneLocalCalendarDayYmd(toDate);
     const { data, error } = await supabase
       .from('expenses')
       .select('*')
       .eq('organization_id', organizationId)
       .gte('expense_date', fromDate)
-      .lte('expense_date', toDate)
+      .lt('expense_date', toExclusive)
       .order('expense_date', { ascending: false });
 
     if (error) throw error;

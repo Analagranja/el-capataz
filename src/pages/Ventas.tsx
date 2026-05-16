@@ -12,6 +12,7 @@ import Table from '../components/ui/Table';
 import Badge from '../components/ui/Badge';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { formatArs } from '../utils/formatCurrency';
+import { todayLocalYmdParts } from '../utils/statsPeriod';
 
 const SALE_TYPE_OPTIONS: Array<{ value: Sale['type']; label: string }> = [
   { value: 'maple', label: 'Maple (30 huevos)' },
@@ -29,7 +30,7 @@ export default function Ventas() {
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string>('');
   const [formData, setFormData] = React.useState({
-    date: new Date().toISOString().split('T')[0],
+    date: todayLocalYmdParts().ymd,
     customer_id: '',
     type: 'docena' as 'maple' | 'docena' | 'media_docena',
     quantity: 0,
@@ -94,7 +95,7 @@ export default function Ventas() {
     } else {
       setEditingId(null);
       setFormData({
-        date: new Date().toISOString().split('T')[0],
+        date: todayLocalYmdParts().ymd,
         customer_id: customers[0]?.id || '',
         type: 'docena',
         quantity: 0,

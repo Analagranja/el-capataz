@@ -25,6 +25,13 @@ function toDateInputValue(raw: string): string {
 
 const LAST_BAG_KG_KEY = 'produccion_last_feed_bag_kg';
 
+function getSavedKgPorBolsa(): number {
+  if (typeof window === 'undefined') return 25;
+  const raw = window.localStorage.getItem(LAST_BAG_KG_KEY);
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 25;
+}
+
 export default function Produccion({ selectedGallineroId }: Produccion) {
   const { organizationId } = useAuth();
   const { canLogProduction } = useRole();
@@ -42,12 +49,11 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
   const [selectedMonth, setSelectedMonth] = React.useState<string>(
     String(new Date().getMonth() + 1).padStart(2, '0')
   );
-  const [feedLogKg, setFeedLogKg] = React.useState<number>(() => {
-    if (typeof window === 'undefined') return 25;
-    const raw = window.localStorage.getItem(LAST_BAG_KG_KEY);
-    const parsed = Number(raw);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : 25;
-  });
+  const [feedConsumoTipo, setFeedConsumoTipo] = React.useState<'bolsas' | 'granel'>('bolsas');
+  const [feedCantidadBolsas, setFeedCantidadBolsas] = React.useState(0);
+  const [feedKgPorBolsa, setFeedKgPorBolsa] = React.useState<number>(() => getSavedKgPorBolsa());
+  const [feedKgGranel, setFeedKgGranel] = React.useState(0);
+  const [feedLogDate, setFeedLogDate] = React.useState(() => new Date().toISOString().split('T')[0]);
   const [feedLogSaving, setFeedLogSaving] = React.useState(false);
   const [feedLogError, setFeedLogError] = React.useState('');
   const [formData, setFormData] = React.useState({
@@ -149,33 +155,81 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
     setDuplicateInfo(null);
   };
 
+  const resetFeedConsumoForm = React.useCallback(() => {
+    setFeedConsumoTipo('bolsas');
+    setFeedCantidadBolsas(0);
+    setFeedKgPorBolsa(getSavedKgPorBolsa());
+    setFeedKgGranel(0);
+    setFeedLogDate(new Date().toISOString().split('T')[0]);
+  }, []);
+
+  const feedTotalKgComputed =
+    feedConsumoTipo === 'bolsas'
+      ? Math.max(0, Math.floor(feedCantidadBolsas)) * Math.max(0, feedKgPorBolsa)
+      : Math.max(0, feedKgGranel);
+
+  const isFeedConsumoFormValid = React.useMemo(() => {
+    if (!feedLogDate?.trim()) return false;
+    if (feedConsumoTipo === 'bolsas') {
+      const n = Math.floor(feedCantidadBolsas);
+      const kg = feedKgPorBolsa;
+      return n >= 1 && Number.isFinite(kg) && kg > 0 && Number.isFinite(n * kg) && n * kg > 0;
+    }
+    return Number.isFinite(feedKgGranel) && feedKgGranel > 0;
+  }, [
+    feedLogDate,
+    feedConsumoTipo,
+    feedCantidadBolsas,
+    feedKgPorBolsa,
+    feedKgGranel,
+  ]);
+
   const handleCloseFeedLogModal = () => {
     setIsFeedLogModalOpen(false);
     setFeedLogError('');
+    resetFeedConsumoForm();
   };
 
   const handleSaveFeedLog = async () => {
     if (!canLogProduction() || !organizationId) return;
     if (!currentGallineroId) {
-      setFeedLogError('Seleccioná un gallinero para registrar la apertura de bolsa.');
+      setFeedLogError('Seleccioná un gallinero para registrar el consumo.');
       return;
     }
-    if (!Number.isFinite(feedLogKg) || feedLogKg <= 0) {
-      setFeedLogError('Ingresá un peso válido en kg.');
+    if (!isFeedConsumoFormValid) {
+      setFeedLogError('Completá todos los campos obligatorios.');
+      return;
+    }
+    const totalKg =
+      feedConsumoTipo === 'bolsas'
+        ? Math.max(0, Math.floor(feedCantidadBolsas)) * Math.max(0, feedKgPorBolsa)
+        : Math.max(0, feedKgGranel);
+    if (!Number.isFinite(totalKg) || totalKg <= 0) {
+      setFeedLogError('Revisá los kg ingresados.');
       return;
     }
     try {
       setFeedLogSaving(true);
-      const todayYmd = new Date().toISOString().split('T')[0];
-      await feedLogsService.create(organizationId, currentGallineroId, todayYmd, feedLogKg);
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem(LAST_BAG_KG_KEY, String(feedLogKg));
+      const logDate = feedLogDate.trim().slice(0, 10);
+      if (feedConsumoTipo === 'bolsas') {
+        await feedLogsService.create(organizationId, currentGallineroId, logDate, totalKg, {
+          tipo: 'bolsas',
+          cantidad_bolsas: Math.floor(feedCantidadBolsas),
+          kg_por_bolsa: feedKgPorBolsa,
+        });
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem(LAST_BAG_KG_KEY, String(feedKgPorBolsa));
+        }
+      } else {
+        await feedLogsService.create(organizationId, currentGallineroId, logDate, totalKg, {
+          tipo: 'granel',
+        });
       }
       bumpDashboardMetrics();
       handleCloseFeedLogModal();
     } catch (error) {
       console.error('Error saving feed log:', error);
-      setFeedLogError('No se pudo guardar la apertura de bolsa.');
+      setFeedLogError('No se pudo guardar el consumo de alimento.');
     } finally {
       setFeedLogSaving(false);
     }
@@ -354,13 +408,14 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
                 variant="secondary"
                 onClick={() => {
                   setFeedLogError('');
+                  resetFeedConsumoForm();
                   setIsFeedLogModalOpen(true);
                 }}
                 disabled={!currentGallineroId}
-                title={!currentGallineroId ? 'Seleccioná un gallinero para registrar bolsa.' : undefined}
+                title={!currentGallineroId ? 'Seleccioná un gallinero para registrar consumo.' : undefined}
               >
                 <Package size={18} />
-                Registrar Bolsa
+                Registrar Consumo
               </Button>
               <Button variant="primary" onClick={() => handleOpenModal()}>
                 <Plus size={20} />
@@ -600,27 +655,89 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
         </form>
       </Modal>
 
-      <Modal isOpen={isFeedLogModalOpen} onClose={handleCloseFeedLogModal} title="Registrar bolsa de alimento">
+      <Modal isOpen={isFeedLogModalOpen} onClose={handleCloseFeedLogModal} title="Registrar consumo de alimento">
         <div className="space-y-4">
-          <p className="text-sm text-gray-700">
-            ¿Cuántos kg tiene la bolsa abierta?
-          </p>
-          <Input
-            label="Kg de la bolsa"
-            type="number"
-            step="0.01"
-            min="0"
-            value={feedLogKg}
-            onChange={(e) => setFeedLogKg(parseFloat(e.target.value) || 0)}
+          <Select
+            label="Tipo de compra"
+            options={[
+              { value: 'bolsas', label: 'Bolsas' },
+              { value: 'granel', label: 'Granel' },
+            ]}
+            value={feedConsumoTipo}
+            onChange={(e) => {
+              const v = e.target.value as 'bolsas' | 'granel';
+              setFeedConsumoTipo(v);
+              if (v === 'bolsas') {
+                setFeedKgGranel(0);
+              } else {
+                setFeedCantidadBolsas(0);
+              }
+            }}
             required
           />
+
+          {feedConsumoTipo === 'bolsas' ? (
+            <>
+              <Input
+                label="Cantidad de bolsas"
+                type="number"
+                step="1"
+                min="1"
+                inputMode="numeric"
+                value={feedCantidadBolsas || ''}
+                onChange={(e) => setFeedCantidadBolsas(parseInt(e.target.value, 10) || 0)}
+                required
+              />
+              <Input
+                label="Kg por bolsa"
+                type="number"
+                step="0.01"
+                min="0"
+                value={feedKgPorBolsa}
+                onChange={(e) => setFeedKgPorBolsa(parseFloat(e.target.value) || 0)}
+                helperText="Se recuerda el último valor para la próxima vez."
+                required
+              />
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-sm font-medium text-gray-700 mb-1">Total kg</p>
+                <p className="text-lg font-semibold tabular-nums text-gray-900">
+                  {Number.isFinite(feedTotalKgComputed) ? feedTotalKgComputed.toFixed(2) : '0.00'} kg
+                </p>
+                <p className="mt-1 text-xs text-gray-500">Cantidad de bolsas × kg por bolsa (solo lectura)</p>
+              </div>
+            </>
+          ) : (
+            <Input
+              label="Kg totales"
+              type="number"
+              step="0.01"
+              min="0"
+              value={feedKgGranel}
+              onChange={(e) => setFeedKgGranel(parseFloat(e.target.value) || 0)}
+              required
+            />
+          )}
+
+          <Input
+            label="Fecha de apertura / ingreso"
+            type="date"
+            value={feedLogDate}
+            onChange={(e) => setFeedLogDate(e.target.value)}
+            required
+          />
+
           {feedLogError ? (
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               {feedLogError}
             </div>
           ) : null}
           <div className="flex gap-2 pt-2">
-            <Button variant="primary" onClick={handleSaveFeedLog} className="flex-1" disabled={feedLogSaving}>
+            <Button
+              variant="primary"
+              onClick={handleSaveFeedLog}
+              className="flex-1"
+              disabled={feedLogSaving || !isFeedConsumoFormValid}
+            >
               {feedLogSaving ? 'Guardando…' : 'Guardar'}
             </Button>
             <Button variant="secondary" onClick={handleCloseFeedLogModal} className="flex-1" disabled={feedLogSaving}>
