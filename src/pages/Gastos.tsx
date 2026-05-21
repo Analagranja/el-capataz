@@ -40,7 +40,7 @@ export default function Gastos() {
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [formData, setFormData] = React.useState({
-    date: new Date().toISOString().split('T')[0],
+    date: todayLocalYmd(),
     description: 'Alimento',
     unit: 'kg' as 'kg' | 'bolsas',
     quantity_kg: 0,
@@ -73,7 +73,7 @@ export default function Gastos() {
     setIsModalOpen(false);
     setEditingId(null);
     setFormData({
-      date: new Date().toISOString().split('T')[0],
+      date: todayLocalYmd(),
       description: 'Alimento',
       unit: 'kg',
       quantity_kg: 0,
@@ -87,7 +87,7 @@ export default function Gastos() {
   const openNewExpenseModal = () => {
     setEditingId(null);
     setFormData({
-      date: new Date().toISOString().split('T')[0],
+      date: todayLocalYmd(),
       description: 'Alimento',
       unit: 'kg',
       quantity_kg: 0,

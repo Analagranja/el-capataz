@@ -13,6 +13,7 @@ import Select from '../components/ui/Select';
 import Modal from '../components/ui/Modal';
 import Table from '../components/ui/Table';
 import { Plus, Pencil, Trash2, Package } from 'lucide-react';
+import { todayLocalYmd } from '../utils/monthToDateFinance';
 
 interface Produccion {
   selectedGallineroId: string | null;
@@ -53,12 +54,12 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
   const [feedCantidadBolsas, setFeedCantidadBolsas] = React.useState(0);
   const [feedKgPorBolsa, setFeedKgPorBolsa] = React.useState<number>(() => getSavedKgPorBolsa());
   const [feedKgGranel, setFeedKgGranel] = React.useState(0);
-  const [feedLogDate, setFeedLogDate] = React.useState(() => new Date().toISOString().split('T')[0]);
+  const [feedLogDate, setFeedLogDate] = React.useState(() => todayLocalYmd());
   const [feedLogSaving, setFeedLogSaving] = React.useState(false);
   const [feedLogError, setFeedLogError] = React.useState('');
   const [formData, setFormData] = React.useState({
     gallinero_id: selectedGallineroId || '',
-    date: new Date().toISOString().split('T')[0],
+    date: todayLocalYmd(),
     eggs_count: 0,
     broken_dirty_eggs_count: 0,
     notes: '',
@@ -138,7 +139,7 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
       setEditingId(null);
       setFormData({
         gallinero_id: currentGallineroId || gallineros[0]?.id || '',
-        date: new Date().toISOString().split('T')[0],
+        date: todayLocalYmd(),
         eggs_count: 0,
         broken_dirty_eggs_count: 0,
         notes: '',
@@ -160,7 +161,7 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
     setFeedCantidadBolsas(0);
     setFeedKgPorBolsa(getSavedKgPorBolsa());
     setFeedKgGranel(0);
-    setFeedLogDate(new Date().toISOString().split('T')[0]);
+    setFeedLogDate(todayLocalYmd());
   }, []);
 
   const feedTotalKgComputed =
