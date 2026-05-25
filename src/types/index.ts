@@ -1,12 +1,46 @@
+export interface GallineroFlock {
+  id: string;
+  organization_id: string;
+  gallinero_id: string;
+  name: string;
+  current_count: number;
+  status: 'active' | 'retired';
+  birth_date?: string | null;
+  breed?: string | null;
+  feather_color?: string | null;
+  average_weight_kg?: number | null;
+  band_number?: string | null;
+  band_color?: string | null;
+  supplier?: string | null;
+  notes_flock?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface Gallinero {
   id: string;
   organization_id: string;
   name: string;
   color: string;
-  capacity: number;
+  /** Capacidad máxima (columna legacy; puede no existir en todas las BD) */
+  capacity?: number;
+  /** Suma de `current_count` de camadas con status `active` */
   current_count: number;
+  flocks?: GallineroFlock[];
   created_at: string;
   updated_at: string;
+}
+
+export interface MortalityLog {
+  id: string;
+  organization_id: string;
+  gallinero_id: string;
+  flock_id?: string | null;
+  date: string;
+  count: number;
+  cause?: string | null;
+  notes?: string | null;
+  created_at: string;
 }
 
 export interface ProductionRecord {
@@ -84,6 +118,9 @@ export interface Expense {
   description: string;
   quantity_kg: number;
   total_price: number;
+  gallinero_id?: string | null;
+  /** Nombre del gallinero (join virtual, no columna en `expenses`) */
+  gallinero_name?: string | null;
   created_at: string;
 }
 

@@ -1,6 +1,7 @@
 import React from 'react';
-import { Expense } from '../types';
+import { Expense, Gallinero } from '../types';
 import { expensesService } from '../services/expenses';
+import { gallinerosService } from '../services/gallineros';
 import { useAuth } from '../contexts/AuthContext';
 import { useBumpDashboardMetrics } from '../contexts/DashboardMetricsRefreshContext';
 import Card from '../components/ui/Card';
@@ -36,6 +37,8 @@ export default function Gastos() {
   const { organizationId } = useAuth();
   const bumpDashboardMetrics = useBumpDashboardMetrics();
   const [expenses, setExpenses] = React.useState<Expense[]>([]);
+  const [gallineros, setGallineros] = React.useState<Gallinero[]>([]);
+  const [filterGallinero, setFilterGallinero] = React.useState<string>('all');
   const [loading, setLoading] = React.useState(true);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
@@ -48,6 +51,7 @@ export default function Gastos() {
     bag_weight_kg: getSavedBagWeight(),
     bag_price: 0,
     total_price: 0,
+    gallinero_id: null as string | null,
   });
 
   const loadExpenses = async () => {
@@ -65,8 +69,23 @@ export default function Gastos() {
     }
   };
 
+  const loadGallineros = async () => {
+    if (!organizationId) {
+      setGallineros([]);
+      return;
+    }
+    try {
+      const data = await gallinerosService.getAll(organizationId);
+      setGallineros(data);
+    } catch (error) {
+      console.error('Error loading gallineros:', error);
+      setGallineros([]);
+    }
+  };
+
   React.useEffect(() => {
     loadExpenses();
+    loadGallineros();
   }, [organizationId]);
 
   const handleCloseModal = () => {
@@ -81,6 +100,7 @@ export default function Gastos() {
       bag_weight_kg: getSavedBagWeight(),
       bag_price: 0,
       total_price: 0,
+      gallinero_id: null,
     });
   };
 
@@ -95,6 +115,7 @@ export default function Gastos() {
       bag_weight_kg: getSavedBagWeight(),
       bag_price: 0,
       total_price: 0,
+      gallinero_id: null,
     });
     setIsModalOpen(true);
   };
@@ -110,9 +131,35 @@ export default function Gastos() {
       bag_weight_kg: getSavedBagWeight(),
       bag_price: 0,
       total_price: expense.total_price,
+      gallinero_id: expense.gallinero_id ?? null,
     });
     setIsModalOpen(true);
   };
+
+  const gallineroFormSelectOptions = React.useMemo(
+    () => [
+      { value: '', label: 'Granja general' },
+      ...gallineros.map((g) => ({ value: g.id, label: g.name })),
+    ],
+    [gallineros]
+  );
+
+  const gallineroFilterOptions = React.useMemo(
+    () => [
+      { value: 'all', label: 'Todos' },
+      { value: 'general', label: 'Granja general' },
+      ...gallineros.map((g) => ({ value: g.id, label: g.name })),
+    ],
+    [gallineros]
+  );
+
+  const filteredExpenses = React.useMemo(() => {
+    if (filterGallinero === 'all') return expenses;
+    if (filterGallinero === 'general') {
+      return expenses.filter((e) => e.gallinero_id == null);
+    }
+    return expenses.filter((e) => e.gallinero_id === filterGallinero);
+  }, [expenses, filterGallinero]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -138,7 +185,8 @@ export default function Gastos() {
           formData.date,
           formData.description,
           quantityKg,
-          computedTotalPrice
+          computedTotalPrice,
+          formData.gallinero_id ?? null
         );
       } else {
         await expensesService.create(
@@ -146,7 +194,8 @@ export default function Gastos() {
           formData.date,
           formData.description,
           quantityKg,
-          computedTotalPrice
+          computedTotalPrice,
+          formData.gallinero_id ?? null
         );
       }
       if (alimento && formData.unit === 'bolsas' && formData.bag_weight_kg > 0 && typeof window !== 'undefined') {
@@ -173,8 +222,8 @@ export default function Gastos() {
     }
   };
 
-  const totalExpenses = expenses.reduce((sum, e) => sum + e.total_price, 0);
-  const totalKg = expenses.reduce((sum, e) => sum + e.quantity_kg, 0);
+  const totalExpenses = filteredExpenses.reduce((sum, e) => sum + e.total_price, 0);
+  const totalKg = filteredExpenses.reduce((sum, e) => sum + e.quantity_kg, 0);
   const isAlimentoForm = isAlimento(formData.description);
   const kilosFromBags = (formData.bags_count || 0) * (formData.bag_weight_kg || 0);
   const totalFromBagsPrice = (formData.bags_count || 0) * (formData.bag_price || 0);
@@ -210,6 +259,15 @@ export default function Gastos() {
         </Card>
       </div>
 
+      <Card padding="md">
+        <Select
+          label="Filtrar por gallinero"
+          options={gallineroFilterOptions}
+          value={filterGallinero}
+          onChange={(e) => setFilterGallinero(e.target.value)}
+        />
+      </Card>
+
       <Card padding="none">
         <Table
           columns={[
@@ -228,6 +286,12 @@ export default function Gastos() {
               key: 'total_price',
               label: 'Total',
               render: (value) => formatArs(value as number),
+            },
+            {
+              key: 'gallinero_name',
+              label: 'Gallinero',
+              render: (_value, row: Expense) =>
+                row.gallinero_id == null ? 'General' : row.gallinero_name?.trim() || 'General',
             },
             {
               key: 'id',
@@ -250,7 +314,7 @@ export default function Gastos() {
               ),
             },
           ]}
-          data={expenses}
+          data={filteredExpenses}
         />
       </Card>
 
@@ -270,6 +334,18 @@ export default function Gastos() {
             onChange={(e) => setFormData({ ...formData, description: e.target.value })}
             placeholder="Ej: Alimento"
             required
+          />
+
+          <Select
+            label="Asignar a gallinero (opcional)"
+            options={gallineroFormSelectOptions}
+            value={formData.gallinero_id ?? ''}
+            onChange={(e) =>
+              setFormData({
+                ...formData,
+                gallinero_id: e.target.value === '' ? null : e.target.value,
+              })
+            }
           />
 
           {isAlimentoForm && (

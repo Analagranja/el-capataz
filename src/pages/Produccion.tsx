@@ -14,6 +14,7 @@ import Modal from '../components/ui/Modal';
 import Table from '../components/ui/Table';
 import { Plus, Pencil, Trash2, Package } from 'lucide-react';
 import { todayLocalYmd } from '../utils/monthToDateFinance';
+import { distributeFeedKgByGallinero } from '../utils/distributeFeedKg';
 
 interface Produccion {
   selectedGallineroId: string | null;
@@ -55,6 +56,7 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
   const [feedKgPorBolsa, setFeedKgPorBolsa] = React.useState<number>(() => getSavedKgPorBolsa());
   const [feedKgGranel, setFeedKgGranel] = React.useState(0);
   const [feedLogDate, setFeedLogDate] = React.useState(() => todayLocalYmd());
+  const [feedGallineroTarget, setFeedGallineroTarget] = React.useState<string>('all');
   const [feedLogSaving, setFeedLogSaving] = React.useState(false);
   const [feedLogError, setFeedLogError] = React.useState('');
   const [formData, setFormData] = React.useState({
@@ -169,8 +171,24 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
       ? Math.max(0, Math.floor(feedCantidadBolsas)) * Math.max(0, feedKgPorBolsa)
       : Math.max(0, feedKgGranel);
 
+  const feedGallineroSelectOptions = React.useMemo(
+    () => [
+      { value: 'all', label: 'Toda la granja (distribuir)' },
+      ...gallineros.map((g) => ({ value: g.id, label: g.name })),
+    ],
+    [gallineros]
+  );
+
+  const openFeedLogModal = () => {
+    setFeedLogError('');
+    resetFeedConsumoForm();
+    setFeedGallineroTarget(currentGallineroId ?? 'all');
+    setIsFeedLogModalOpen(true);
+  };
+
   const isFeedConsumoFormValid = React.useMemo(() => {
     if (!feedLogDate?.trim()) return false;
+    if (!feedGallineroTarget) return false;
     if (feedConsumoTipo === 'bolsas') {
       const n = Math.floor(feedCantidadBolsas);
       const kg = feedKgPorBolsa;
@@ -183,6 +201,7 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
     feedCantidadBolsas,
     feedKgPorBolsa,
     feedKgGranel,
+    feedGallineroTarget,
   ]);
 
   const handleCloseFeedLogModal = () => {
@@ -193,10 +212,6 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
 
   const handleSaveFeedLog = async () => {
     if (!canLogProduction() || !organizationId) return;
-    if (!currentGallineroId) {
-      setFeedLogError('Seleccioná un gallinero para registrar el consumo.');
-      return;
-    }
     if (!isFeedConsumoFormValid) {
       setFeedLogError('Completá todos los campos obligatorios.');
       return;
@@ -212,19 +227,36 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
     try {
       setFeedLogSaving(true);
       const logDate = feedLogDate.trim().slice(0, 10);
-      if (feedConsumoTipo === 'bolsas') {
-        await feedLogsService.create(organizationId, currentGallineroId, logDate, totalKg, {
-          tipo: 'bolsas',
-          cantidad_bolsas: Math.floor(feedCantidadBolsas),
-          kg_por_bolsa: feedKgPorBolsa,
-        });
+      const metaBolsas =
+        feedConsumoTipo === 'bolsas'
+          ? {
+              tipo: 'bolsas' as const,
+              cantidad_bolsas: Math.floor(feedCantidadBolsas),
+              kg_por_bolsa: feedKgPorBolsa,
+            }
+          : { tipo: 'granel' as const };
+
+      if (feedGallineroTarget === 'all') {
+        const shares = distributeFeedKgByGallinero(totalKg, gallineros);
+        if (shares.length === 0) {
+          setFeedLogError('No hay gallineros con gallinas para distribuir el consumo.');
+          return;
+        }
+        await Promise.all(
+          shares.map(({ gallineroId, kg }) =>
+            feedLogsService.create(organizationId, gallineroId, logDate, kg, { tipo: 'granel' })
+          )
+        );
+        if (feedConsumoTipo === 'bolsas' && typeof window !== 'undefined') {
+          window.localStorage.setItem(LAST_BAG_KG_KEY, String(feedKgPorBolsa));
+        }
+      } else if (feedConsumoTipo === 'bolsas') {
+        await feedLogsService.create(organizationId, feedGallineroTarget, logDate, totalKg, metaBolsas);
         if (typeof window !== 'undefined') {
           window.localStorage.setItem(LAST_BAG_KG_KEY, String(feedKgPorBolsa));
         }
       } else {
-        await feedLogsService.create(organizationId, currentGallineroId, logDate, totalKg, {
-          tipo: 'granel',
-        });
+        await feedLogsService.create(organizationId, feedGallineroTarget, logDate, totalKg, metaBolsas);
       }
       bumpDashboardMetrics();
       handleCloseFeedLogModal();
@@ -405,16 +437,7 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
         <div className="flex flex-wrap gap-2">
           {canLogProduction() ? (
             <>
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setFeedLogError('');
-                  resetFeedConsumoForm();
-                  setIsFeedLogModalOpen(true);
-                }}
-                disabled={!currentGallineroId}
-                title={!currentGallineroId ? 'Seleccioná un gallinero para registrar consumo.' : undefined}
-              >
+              <Button variant="secondary" onClick={openFeedLogModal}>
                 <Package size={18} />
                 Registrar Consumo
               </Button>
@@ -658,6 +681,14 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
 
       <Modal isOpen={isFeedLogModalOpen} onClose={handleCloseFeedLogModal} title="Registrar consumo de alimento">
         <div className="space-y-4">
+          <Select
+            label="Gallinero"
+            options={feedGallineroSelectOptions}
+            value={feedGallineroTarget}
+            onChange={(e) => setFeedGallineroTarget(e.target.value)}
+            required
+          />
+
           <Select
             label="Tipo de compra"
             options={[
