@@ -31,8 +31,6 @@ import { computeMonthToDateTotals } from '../utils/monthToDateFinance';
 import { boundsForYearMonthFilter, boundsForCalendarYear, todayLocalYmdParts } from '../utils/statsPeriod';
 import { formatArs } from '../utils/formatCurrency';
 
-// TODO: agregar filtro por gallinero en versión futura
-
 const EGGS_PER_SALE_TYPE: Record<Sale['type'], number> = {
   maple: 30,
   docena: 12,
@@ -71,6 +69,7 @@ export default function Estadisticas() {
   const [exportError, setExportError] = React.useState('');
   const [selectedYear, setSelectedYear] = React.useState<string>(new Date().getFullYear().toString());
   const [selectedMonth, setSelectedMonth] = React.useState<string>('');
+  const [selectedGallinero, setSelectedGallinero] = React.useState('');
 
   const loadGallineros = async () => {
     if (!organizationId) return;
@@ -181,17 +180,34 @@ export default function Estadisticas() {
     return yearMatches && monthMatches;
   };
 
-  const filteredProduction = production.filter((p) => dateMatchesFilter(p.date));
+  const matchesGallineroFilter = (gallineroId: string) =>
+    !selectedGallinero || gallineroId === selectedGallinero;
+
+  const filteredProduction = production.filter(
+    (p) => dateMatchesFilter(p.date) && matchesGallineroFilter(p.gallinero_id)
+  );
   const filteredSales = sales.filter((s) => dateMatchesFilter(s.date));
   const filteredExpenses = expenses.filter((e) => dateMatchesFilter(e.date));
   const filteredEvents = events.filter((e) => dateMatchesFilter(e.date));
-  const filteredFeedLogs = feedLogs.filter((f) => dateMatchesFilter(f.date));
-
-  /** Total aves de la organización (todos los gallineros); base para postura y consumo/ave. */
-  const totalFarmHens = gallineros.reduce(
-    (sum, g) => sum + Math.max(0, Math.floor(Number(g.current_count) || 0)),
-    0
+  const filteredFeedLogs = feedLogs.filter(
+    (f) => dateMatchesFilter(f.date) && matchesGallineroFilter(f.gallinero_id)
   );
+
+  const sumGallineroHens = (list: Gallinero[]) =>
+    list.reduce(
+      (sum, g) => sum + Math.max(0, Math.floor(Number(g.current_count) || 0)),
+      0
+    );
+
+  /** Aves para postura y consumo/ave: gallinero filtrado o suma de toda la granja. */
+  const totalFarmHens = selectedGallinero
+    ? Math.max(
+        0,
+        Math.floor(
+          Number(gallineros.find((g) => g.id === selectedGallinero)?.current_count) || 0
+        )
+      )
+    : sumGallineroHens(gallineros);
 
   const eggsByDate = React.useMemo(() => {
     const m = new Map<string, number>();
@@ -200,6 +216,11 @@ export default function Estadisticas() {
     }
     return m;
   }, [filteredProduction]);
+
+  const gallineroFilterOptions = [
+    { value: '', label: 'Toda la granja' },
+    ...gallineros.map((g) => ({ value: g.id, label: g.name })),
+  ];
 
   const monthOptions = [
     { value: '', label: 'Todos los meses' },
@@ -306,10 +327,12 @@ export default function Estadisticas() {
     periodBounds.toYmd
   );
   const totalFeedKg = filteredFeedLogs.reduce((sum, f) => sum + (f.kg_opened || 0), 0);
-  const gramsPerHenPerDay =
-    totalFarmHens > 0 && totalFeedKg > 0 && periodBounds.dayCount > 0
-      ? (totalFeedKg * 1000) / (totalFarmHens * periodBounds.dayCount)
-      : 0;
+  const totalHensForFeed = totalFarmHens;
+  const hasFeedConsumptionData =
+    totalFeedKg > 0 && periodBounds.dayCount > 0 && totalHensForFeed > 0;
+  const gramsPerHenPerDay = hasFeedConsumptionData
+    ? (totalFeedKg * 1000) / (periodBounds.dayCount * totalHensForFeed)
+    : null;
 
   const summaryCalendarYear = new Date().getFullYear();
   const padMonth = (n: number) => String(n).padStart(2, '0');
@@ -409,7 +432,13 @@ export default function Estadisticas() {
       {exportError ? <p className="text-sm text-red-600">{exportError}</p> : null}
 
       <Card padding="md">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Select
+            label="Gallinero"
+            options={gallineroFilterOptions}
+            value={selectedGallinero}
+            onChange={(e) => setSelectedGallinero(e.target.value)}
+          />
           <Select
             label="Año"
             options={yearOptions}
@@ -563,10 +592,18 @@ export default function Estadisticas() {
         <Card padding="md" hover>
           <div>
             <p className="text-sm text-gray-600 mb-1">Consumo por ave/día</p>
-            <p className="text-2xl font-bold text-gray-900">{Math.round(gramsPerHenPerDay)} g</p>
+            <p className="text-2xl font-bold text-gray-900">
+              {gramsPerHenPerDay != null ? `${gramsPerHenPerDay.toFixed(1)} g/ave/día` : 'Sin datos'}
+            </p>
             <p className="text-xs text-gray-500 mt-1">
-              Alimento: {totalFeedKg.toFixed(2)} kg · {periodBounds.dayCount} día(s) del período ·{' '}
-              {totalFarmHens} aves (toda la granja)
+              {gramsPerHenPerDay != null ? (
+                <>
+                  {totalFeedKg.toFixed(2)} kg · {periodBounds.dayCount} día(s) · {totalHensForFeed} aves (
+                  {selectedGallinero ? 'gallinero seleccionado' : 'toda la granja'})
+                </>
+              ) : (
+                <>Sin registros de consumo de alimento en el período filtrado.</>
+              )}
             </p>
           </div>
         </Card>
