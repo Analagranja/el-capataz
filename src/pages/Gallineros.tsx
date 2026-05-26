@@ -84,6 +84,115 @@ function flockPayloadFromForm(form: NewFlockFormState): GallineroFlockInput {
   };
 }
 
+function flockToForm(f: GallineroFlock): NewFlockFormState {
+  return {
+    name: f.name,
+    current_count: f.current_count,
+    birth_date: f.birth_date ? String(f.birth_date).slice(0, 10) : '',
+    breed: f.breed ?? '',
+    feather_color: f.feather_color ?? '',
+    average_weight_kg: f.average_weight_kg != null ? String(f.average_weight_kg) : '',
+    band_number: f.band_number ?? '',
+    band_color: f.band_color ?? '',
+    supplier: f.supplier ?? '',
+    notes_flock: f.notes_flock ?? '',
+  };
+}
+
+type EditingFlockEntry = {
+  flock: GallineroFlock;
+  form: NewFlockFormState;
+  saving: boolean;
+  error: string;
+};
+
+function FlockFormFields({
+  form,
+  onChange,
+}: {
+  form: NewFlockFormState;
+  onChange: (form: NewFlockFormState) => void;
+}) {
+  return (
+    <>
+      <Input
+        label="Nombre de la camada"
+        value={form.name}
+        onChange={(e) => onChange({ ...form, name: e.target.value })}
+        required
+      />
+      <Input
+        label="Cantidad de gallinas"
+        type="number"
+        min={1}
+        value={form.current_count}
+        onChange={(e) =>
+          onChange({
+            ...form,
+            current_count: Math.max(0, parseInt(e.target.value, 10) || 0),
+          })
+        }
+        required
+      />
+      <Input
+        label="Fecha de nacimiento / ingreso"
+        type="date"
+        value={form.birth_date}
+        onChange={(e) => onChange({ ...form, birth_date: e.target.value })}
+      />
+      <Input
+        label="Raza"
+        value={form.breed}
+        onChange={(e) => onChange({ ...form, breed: e.target.value })}
+        placeholder="Ej: Hy-Line Brown"
+      />
+      <Input
+        label="Color de plumaje"
+        value={form.feather_color}
+        onChange={(e) => onChange({ ...form, feather_color: e.target.value })}
+        placeholder="Ej: Marrón"
+      />
+      <div className="flex gap-2 items-end">
+        <Input
+          label="Peso promedio del lote"
+          type="number"
+          step="0.01"
+          min={0}
+          value={form.average_weight_kg}
+          onChange={(e) => onChange({ ...form, average_weight_kg: e.target.value })}
+          placeholder="Ej: 1.8"
+          className="flex-1"
+        />
+        <span className="pb-2 text-sm text-gray-600 shrink-0">kg</span>
+      </div>
+      <Input
+        label="N° de precinto"
+        value={form.band_number}
+        onChange={(e) => onChange({ ...form, band_number: e.target.value })}
+      />
+      <Input
+        label="Color de precinto"
+        value={form.band_color}
+        onChange={(e) => onChange({ ...form, band_color: e.target.value })}
+      />
+      <Input
+        label="Proveedor"
+        value={form.supplier}
+        onChange={(e) => onChange({ ...form, supplier: e.target.value })}
+      />
+      <div className="w-full">
+        <label className="block text-sm font-medium text-gray-700 mb-1">Observaciones</label>
+        <textarea
+          value={form.notes_flock}
+          onChange={(e) => onChange({ ...form, notes_flock: e.target.value })}
+          rows={3}
+          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+    </>
+  );
+}
+
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-3 text-sm">
@@ -141,6 +250,7 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
   const [deleting, setDeleting] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [formData, setFormData] = React.useState<GallineroFormState>(emptyGallineroForm);
+  const [editingFlocks, setEditingFlocks] = React.useState<EditingFlockEntry[]>([]);
 
   const [detailTarget, setDetailTarget] = React.useState<Gallinero | null>(null);
   const [detailLogs, setDetailLogs] = React.useState<MortalityLog[]>([]);
@@ -208,9 +318,19 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
     if (gallinero) {
       setEditingId(gallinero.id);
       setFormData({ name: gallinero.name, color: gallinero.color });
+      const flocks = activeFlocks(gallinero);
+      setEditingFlocks(
+        flocks.map((f) => ({
+          flock: f,
+          form: flockToForm(f),
+          saving: false,
+          error: '',
+        }))
+      );
     } else {
       setEditingId(null);
       setFormData(emptyGallineroForm());
+      setEditingFlocks([]);
     }
     setIsModalOpen(true);
   };
@@ -218,6 +338,57 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setEditingId(null);
+    setEditingFlocks([]);
+  };
+
+  const updateEditingFlockForm = (flockId: string, form: NewFlockFormState) => {
+    setEditingFlocks((prev) =>
+      prev.map((entry) =>
+        entry.flock.id === flockId ? { ...entry, form, error: '' } : entry
+      )
+    );
+  };
+
+  const handleSaveEditingFlock = async (flockId: string) => {
+    if (!organizationId || !canManageCoops()) return;
+    const idx = editingFlocks.findIndex((e) => e.flock.id === flockId);
+    if (idx < 0) return;
+    const entry = editingFlocks[idx];
+    if (entry.form.current_count < 1) {
+      setEditingFlocks((prev) =>
+        prev.map((e, i) =>
+          i === idx ? { ...e, error: 'La cantidad debe ser al menos 1.' } : e
+        )
+      );
+      return;
+    }
+    setEditingFlocks((prev) =>
+      prev.map((e, i) => (i === idx ? { ...e, saving: true, error: '' } : e))
+    );
+    try {
+      const updated = await gallineroFlocksService.update(
+        organizationId,
+        flockId,
+        flockPayloadFromForm(entry.form)
+      );
+      setEditingFlocks((prev) =>
+        prev.map((e, i) =>
+          i === idx
+            ? { flock: updated, form: flockToForm(updated), saving: false, error: '' }
+            : e
+        )
+      );
+      await loadGallineros();
+    } catch (error) {
+      console.error('Error updating flock:', error);
+      setEditingFlocks((prev) =>
+        prev.map((e, i) =>
+          i === idx
+            ? { ...e, saving: false, error: 'No se pudo guardar la camada. Reintentá.' }
+            : e
+        )
+      );
+    }
   };
 
   const handleOpenDetail = async (gallinero: Gallinero) => {
@@ -628,80 +799,7 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
 
       <Modal isOpen={newFlockOpen && !!detailTarget} onClose={handleCloseNewFlock} title="Nueva camada">
         <form onSubmit={handleSubmitNewFlock} className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
-          <Input
-            label="Nombre de la camada"
-            value={newFlockForm.name}
-            onChange={(e) => setNewFlockForm({ ...newFlockForm, name: e.target.value })}
-            required
-          />
-          <Input
-            label="Cantidad de gallinas"
-            type="number"
-            min={1}
-            value={newFlockForm.current_count}
-            onChange={(e) =>
-              setNewFlockForm({
-                ...newFlockForm,
-                current_count: Math.max(0, parseInt(e.target.value, 10) || 0),
-              })
-            }
-            required
-          />
-          <Input
-            label="Fecha de nacimiento / ingreso"
-            type="date"
-            value={newFlockForm.birth_date}
-            onChange={(e) => setNewFlockForm({ ...newFlockForm, birth_date: e.target.value })}
-          />
-          <Input
-            label="Raza"
-            value={newFlockForm.breed}
-            onChange={(e) => setNewFlockForm({ ...newFlockForm, breed: e.target.value })}
-            placeholder="Ej: Hy-Line Brown"
-          />
-          <Input
-            label="Color de plumaje"
-            value={newFlockForm.feather_color}
-            onChange={(e) => setNewFlockForm({ ...newFlockForm, feather_color: e.target.value })}
-            placeholder="Ej: Marrón"
-          />
-          <div className="flex gap-2 items-end">
-            <Input
-              label="Peso promedio del lote"
-              type="number"
-              step="0.01"
-              min={0}
-              value={newFlockForm.average_weight_kg}
-              onChange={(e) => setNewFlockForm({ ...newFlockForm, average_weight_kg: e.target.value })}
-              placeholder="Ej: 1.8"
-              className="flex-1"
-            />
-            <span className="pb-2 text-sm text-gray-600 shrink-0">kg</span>
-          </div>
-          <Input
-            label="N° de precinto"
-            value={newFlockForm.band_number}
-            onChange={(e) => setNewFlockForm({ ...newFlockForm, band_number: e.target.value })}
-          />
-          <Input
-            label="Color de precinto"
-            value={newFlockForm.band_color}
-            onChange={(e) => setNewFlockForm({ ...newFlockForm, band_color: e.target.value })}
-          />
-          <Input
-            label="Proveedor"
-            value={newFlockForm.supplier}
-            onChange={(e) => setNewFlockForm({ ...newFlockForm, supplier: e.target.value })}
-          />
-          <div className="w-full">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Observaciones</label>
-            <textarea
-              value={newFlockForm.notes_flock}
-              onChange={(e) => setNewFlockForm({ ...newFlockForm, notes_flock: e.target.value })}
-              rows={3}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+          <FlockFormFields form={newFlockForm} onChange={setNewFlockForm} />
           <div className="flex gap-2 pt-2">
             <Button variant="primary" type="submit" className="flex-1" disabled={newFlockSaving}>
               {newFlockSaving ? 'Guardando…' : 'Guardar camada'}
@@ -865,7 +963,7 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
         onClose={handleCloseModal}
         title={editingId ? 'Editar Gallinero' : 'Nuevo Gallinero'}
       >
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4 max-h-[85vh] overflow-y-auto pr-1">
           <Input
             label="Nombre"
             value={formData.name}
@@ -882,9 +980,35 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
               className="w-full h-10 rounded-lg cursor-pointer"
             />
           </div>
-          <p className="text-xs text-gray-500">
-            Las camadas y gallinas se cargan desde Ver detalle → Nueva camada.
-          </p>
+
+          {editingId && editingFlocks.length > 0 ? (
+            <div className="space-y-4 pt-2 border-t border-gray-200">
+              <h4 className="text-sm font-semibold text-gray-800">Camadas activas</h4>
+              {editingFlocks.map((entry) => (
+                <div
+                  key={entry.flock.id}
+                  className="space-y-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-4"
+                >
+                  <h5 className="font-medium text-gray-900">{entry.flock.name}</h5>
+                  <FlockFormFields
+                    form={entry.form}
+                    onChange={(form) => updateEditingFlockForm(entry.flock.id, form)}
+                  />
+                  {entry.error ? <p className="text-sm text-red-600">{entry.error}</p> : null}
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    className="w-full"
+                    disabled={entry.saving}
+                    onClick={() => handleSaveEditingFlock(entry.flock.id)}
+                  >
+                    {entry.saving ? 'Guardando…' : 'Guardar cambios de esta camada'}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
           <div className="flex gap-2 pt-4">
             <Button variant="primary" type="submit" className="flex-1">
               Guardar
