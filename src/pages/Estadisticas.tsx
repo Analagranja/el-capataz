@@ -36,11 +36,6 @@ import {
 } from '../utils/statsPeriod';
 import { formatArs } from '../utils/formatCurrency';
 
-function expenseIsAlimento(expense: Expense): boolean {
-  const text = `${expense.description ?? ''}`.trim().toLowerCase();
-  return text.includes('alimento');
-}
-
 const EGGS_PER_SALE_TYPE: Record<Sale['type'], number> = {
   maple: 30,
   docena: 12,
@@ -73,6 +68,7 @@ export default function Estadisticas() {
   const [summaryProduction, setSummaryProduction] = React.useState<ProductionRecord[]>([]);
   const [summarySales, setSummarySales] = React.useState<Sale[]>([]);
   const [summaryExpenses, setSummaryExpenses] = React.useState<Expense[]>([]);
+  const [summaryFeedLogs, setSummaryFeedLogs] = React.useState<FeedLog[]>([]);
   const [summaryLoading, setSummaryLoading] = React.useState(true);
   const [loading, setLoading] = React.useState(true);
   const [exporting, setExporting] = React.useState(false);
@@ -145,15 +141,17 @@ export default function Estadisticas() {
       try {
         setSummaryLoading(true);
         const { fromYmd, toYmd } = boundsForCalendarYear(sy);
-        const [prod, saleRows, expRows] = await Promise.all([
+        const [prod, saleRows, expRows, feedLogsData] = await Promise.all([
           productionService.getAllRange(organizationId, fromYmd, toYmd),
           salesService.getAllRange(organizationId, fromYmd, toYmd),
           expensesService.getAllRange(organizationId, fromYmd, toYmd),
+          feedLogsService.getAllRange(organizationId, fromYmd, toYmd),
         ]);
         if (!cancelled) {
           setSummaryProduction(prod);
           setSummarySales(saleRows);
           setSummaryExpenses(expRows);
+          setSummaryFeedLogs(feedLogsData);
         }
       } catch (error) {
         console.error('Error loading monthly summary:', error);
@@ -161,6 +159,7 @@ export default function Estadisticas() {
           setSummaryProduction([]);
           setSummarySales([]);
           setSummaryExpenses([]);
+          setSummaryFeedLogs([]);
         }
       } finally {
         if (!cancelled) setSummaryLoading(false);
@@ -384,17 +383,11 @@ export default function Estadisticas() {
     const netoMes = saleM.reduce((sum, s) => sum + (Number(s.total_price) || 0), 0);
     const gastosMes = expM.reduce((sum, e) => sum + (Number(e.total_price) || 0), 0);
     const gananciaMes = netoMes - gastosMes;
-    const kgAlimento = expM
-      .filter(expenseIsAlimento)
-      .reduce((sum, e) => sum + Math.max(0, Number(e.quantity_kg) || 0), 0);
+    const kgAlimento = summaryFeedLogs
+      .filter((f) => f.date.startsWith(prefix))
+      .reduce((sum, f) => sum + Math.max(0, Number(f.kg_opened) || 0), 0);
 
-    const poultryCounts = prodM
-      .map((p) => Math.max(0, Math.floor(Number(p.poultry_count) || 0)))
-      .filter((n) => n > 0);
-    const avgAvesMes =
-      poultryCounts.length > 0
-        ? poultryCounts.reduce((sum, n) => sum + n, 0) / poultryCounts.length
-        : 0;
+    const avgAvesMes = sumGallineroHens(gallineros);
 
     const gramsPerHenDay =
       kgAlimento > 0 && daysInMonth > 0 && avgAvesMes > 0
