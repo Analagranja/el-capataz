@@ -12,7 +12,8 @@ import Modal from '../components/ui/Modal';
 import Table from '../components/ui/Table';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { formatArs } from '../utils/formatCurrency';
-import { currentMonthStartLocalYmd, todayLocalYmd } from '../utils/monthToDateFinance';
+import { todayLocalYmd } from '../utils/monthToDateFinance';
+import { boundsForYearMonthFilter } from '../utils/statsPeriod';
 
 const LAST_BAG_WEIGHT_KEY = 'gastos_alimento_last_bag_weight_kg';
 
@@ -33,12 +34,33 @@ function getSavedBagWeight(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 25;
 }
 
+const GASTOS_MONTH_OPTIONS = [
+  { value: '', label: 'Todos los meses' },
+  { value: '01', label: 'Enero' },
+  { value: '02', label: 'Febrero' },
+  { value: '03', label: 'Marzo' },
+  { value: '04', label: 'Abril' },
+  { value: '05', label: 'Mayo' },
+  { value: '06', label: 'Junio' },
+  { value: '07', label: 'Julio' },
+  { value: '08', label: 'Agosto' },
+  { value: '09', label: 'Septiembre' },
+  { value: '10', label: 'Octubre' },
+  { value: '11', label: 'Noviembre' },
+  { value: '12', label: 'Diciembre' },
+];
+
 export default function Gastos() {
   const { organizationId } = useAuth();
   const bumpDashboardMetrics = useBumpDashboardMetrics();
+  const now = React.useMemo(() => new Date(), []);
   const [expenses, setExpenses] = React.useState<Expense[]>([]);
   const [gallineros, setGallineros] = React.useState<Gallinero[]>([]);
   const [filterGallinero, setFilterGallinero] = React.useState<string>('all');
+  const [selectedYear, setSelectedYear] = React.useState<string>(String(now.getFullYear()));
+  const [selectedMonth, setSelectedMonth] = React.useState<string>(
+    String(now.getMonth() + 1).padStart(2, '0')
+  );
   const [loading, setLoading] = React.useState(true);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
@@ -54,21 +76,6 @@ export default function Gastos() {
     gallinero_id: null as string | null,
   });
 
-  const loadExpenses = async () => {
-    if (!organizationId) return;
-    try {
-      setLoading(true);
-      const monthStartYmd = currentMonthStartLocalYmd();
-      const todayYmd = todayLocalYmd();
-      const data = await expensesService.getAllRange(organizationId, monthStartYmd, todayYmd);
-      setExpenses(data);
-    } catch (error) {
-      console.error('Error loading expenses:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const loadGallineros = async () => {
     if (!organizationId) {
       setGallineros([]);
@@ -83,10 +90,49 @@ export default function Gastos() {
     }
   };
 
+  const yearOptions = React.useMemo(() => {
+    const y = now.getFullYear();
+    return Array.from({ length: 4 }, (_, i) => {
+      const year = String(y - i);
+      return { value: year, label: year };
+    });
+  }, [now]);
+
   React.useEffect(() => {
-    loadExpenses();
     loadGallineros();
   }, [organizationId]);
+
+  React.useEffect(() => {
+    if (!organizationId) {
+      setExpenses([]);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const { fromYmd, toYmd } = boundsForYearMonthFilter(selectedYear, selectedMonth);
+        const data = await expensesService.getAllRange(organizationId, fromYmd, toYmd);
+        if (!cancelled) setExpenses(data);
+      } catch (error) {
+        console.error('Error loading expenses:', error);
+        if (!cancelled) setExpenses([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [organizationId, selectedYear, selectedMonth]);
+
+  const reloadExpenses = async () => {
+    if (!organizationId) return;
+    const { fromYmd, toYmd } = boundsForYearMonthFilter(selectedYear, selectedMonth);
+    const data = await expensesService.getAllRange(organizationId, fromYmd, toYmd);
+    setExpenses(data);
+  };
 
   const handleCloseModal = () => {
     setIsModalOpen(false);
@@ -201,7 +247,7 @@ export default function Gastos() {
       if (alimento && formData.unit === 'bolsas' && formData.bag_weight_kg > 0 && typeof window !== 'undefined') {
         window.localStorage.setItem(LAST_BAG_WEIGHT_KEY, String(formData.bag_weight_kg));
       }
-      await loadExpenses();
+      await reloadExpenses();
       bumpDashboardMetrics();
       handleCloseModal();
     } catch (error) {
@@ -214,7 +260,7 @@ export default function Gastos() {
     if (window.confirm('¿Eliminar este gasto?')) {
       try {
         await expensesService.delete(organizationId, id);
-        await loadExpenses();
+        await reloadExpenses();
         bumpDashboardMetrics();
       } catch (error) {
         console.error('Error deleting expense:', error);
@@ -248,7 +294,7 @@ export default function Gastos() {
           <p className="text-2xl font-bold text-gray-900">{totalKg.toFixed(2)}</p>
         </Card>
         <Card padding="md" hover>
-          <p className="text-sm text-gray-600 mb-1">Total invertido este mes</p>
+          <p className="text-sm text-gray-600 mb-1">Total invertido (período)</p>
           <p className="text-2xl font-bold text-gray-900">{formatArs(totalExpenses)}</p>
         </Card>
         <Card padding="md" hover>
@@ -260,6 +306,20 @@ export default function Gastos() {
       </div>
 
       <Card padding="md">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <Select
+            label="Año"
+            options={yearOptions}
+            value={selectedYear}
+            onChange={(e) => setSelectedYear(e.target.value)}
+          />
+          <Select
+            label="Mes"
+            options={GASTOS_MONTH_OPTIONS}
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+          />
+        </div>
         <Select
           label="Filtrar por gallinero"
           options={gallineroFilterOptions}

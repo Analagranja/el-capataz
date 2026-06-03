@@ -28,8 +28,18 @@ import Select from '../components/ui/Select';
 import { Download } from 'lucide-react';
 import { downloadSalesAndProductionExcel } from '../utils/exportFarmData';
 import { computeMonthToDateTotals } from '../utils/monthToDateFinance';
-import { boundsForYearMonthFilter, boundsForCalendarYear, todayLocalYmdParts } from '../utils/statsPeriod';
+import {
+  boundsForYearMonthFilter,
+  boundsForCalendarYear,
+  inclusiveLocalDaysBetween,
+  todayLocalYmdParts,
+} from '../utils/statsPeriod';
 import { formatArs } from '../utils/formatCurrency';
+
+function expenseIsAlimento(expense: Expense): boolean {
+  const text = `${expense.description ?? ''}`.trim().toLowerCase();
+  return text.includes('alimento');
+}
 
 const EGGS_PER_SALE_TYPE: Record<Sale['type'], number> = {
   maple: 30,
@@ -70,6 +80,7 @@ export default function Estadisticas() {
   const [selectedYear, setSelectedYear] = React.useState<string>(new Date().getFullYear().toString());
   const [selectedMonth, setSelectedMonth] = React.useState<string>('');
   const [selectedGallinero, setSelectedGallinero] = React.useState('');
+  const [summaryYear, setSummaryYear] = React.useState<string>(new Date().getFullYear().toString());
 
   const loadGallineros = async () => {
     if (!organizationId) return;
@@ -117,27 +128,6 @@ export default function Estadisticas() {
     }
   };
 
-  const loadMonthlySummary = async () => {
-    if (!organizationId) return;
-    try {
-      setSummaryLoading(true);
-      const sy = new Date().getFullYear();
-      const { fromYmd, toYmd } = boundsForCalendarYear(sy);
-      const [prod, saleRows, expRows] = await Promise.all([
-        productionService.getAllRange(organizationId, fromYmd, toYmd),
-        salesService.getAllRange(organizationId, fromYmd, toYmd),
-        expensesService.getAllRange(organizationId, fromYmd, toYmd),
-      ]);
-      setSummaryProduction(prod);
-      setSummarySales(saleRows);
-      setSummaryExpenses(expRows);
-    } catch (error) {
-      console.error('Error loading monthly summary:', error);
-    } finally {
-      setSummaryLoading(false);
-    }
-  };
-
   React.useEffect(() => {
     loadGallineros();
   }, [organizationId]);
@@ -147,8 +137,39 @@ export default function Estadisticas() {
   }, [organizationId, selectedYear]);
 
   React.useEffect(() => {
-    loadMonthlySummary();
-  }, [organizationId]);
+    if (!organizationId) return;
+    let cancelled = false;
+    (async () => {
+      const sy = Number(summaryYear);
+      if (!Number.isFinite(sy)) return;
+      try {
+        setSummaryLoading(true);
+        const { fromYmd, toYmd } = boundsForCalendarYear(sy);
+        const [prod, saleRows, expRows] = await Promise.all([
+          productionService.getAllRange(organizationId, fromYmd, toYmd),
+          salesService.getAllRange(organizationId, fromYmd, toYmd),
+          expensesService.getAllRange(organizationId, fromYmd, toYmd),
+        ]);
+        if (!cancelled) {
+          setSummaryProduction(prod);
+          setSummarySales(saleRows);
+          setSummaryExpenses(expRows);
+        }
+      } catch (error) {
+        console.error('Error loading monthly summary:', error);
+        if (!cancelled) {
+          setSummaryProduction([]);
+          setSummarySales([]);
+          setSummaryExpenses([]);
+        }
+      } finally {
+        if (!cancelled) setSummaryLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [organizationId, summaryYear]);
 
   const fallbackYearOptions = React.useMemo(() => {
     const y = new Date().getFullYear();
@@ -237,6 +258,14 @@ export default function Estadisticas() {
     { value: '11', label: 'Noviembre' },
     { value: '12', label: 'Diciembre' },
   ];
+
+  const summaryYearOptions = React.useMemo(() => {
+    const y = new Date().getFullYear();
+    return Array.from({ length: 12 }, (_, i) => {
+      const year = String(y - i);
+      return { value: year, label: year };
+    });
+  }, []);
 
   if (loading) {
     return <div className="p-8 text-center text-gray-500">Cargando...</div>;
@@ -334,11 +363,16 @@ export default function Estadisticas() {
     ? (totalFeedKg * 1000) / (periodBounds.dayCount * totalHensForFeed)
     : null;
 
-  const summaryCalendarYear = new Date().getFullYear();
+  const summaryCalendarYear = Number(summaryYear) || new Date().getFullYear();
   const padMonth = (n: number) => String(n).padStart(2, '0');
   const monthlySummaryRows = MONTH_NAMES.map((monthLabel, idx) => {
     const m = idx + 1;
     const prefix = `${summaryCalendarYear}-${padMonth(m)}`;
+    const lastDay = new Date(summaryCalendarYear, m, 0).getDate();
+    const fromYmd = `${summaryCalendarYear}-${padMonth(m)}-01`;
+    const toYmd = `${summaryCalendarYear}-${padMonth(m)}-${padMonth(lastDay)}`;
+    const daysInMonth = inclusiveLocalDaysBetween(fromYmd, toYmd);
+
     const prodM = summaryProduction.filter((p) => p.date.startsWith(prefix));
     const saleM = summarySales.filter((s) => s.date.startsWith(prefix));
     const expM = summaryExpenses.filter((e) => e.date.startsWith(prefix));
@@ -350,19 +384,55 @@ export default function Estadisticas() {
     const netoMes = saleM.reduce((sum, s) => sum + (Number(s.total_price) || 0), 0);
     const gastosMes = expM.reduce((sum, e) => sum + (Number(e.total_price) || 0), 0);
     const gananciaMes = netoMes - gastosMes;
+    const kgAlimento = expM
+      .filter(expenseIsAlimento)
+      .reduce((sum, e) => sum + Math.max(0, Number(e.quantity_kg) || 0), 0);
+
+    const poultryCounts = prodM
+      .map((p) => Math.max(0, Math.floor(Number(p.poultry_count) || 0)))
+      .filter((n) => n > 0);
+    const avgAvesMes =
+      poultryCounts.length > 0
+        ? poultryCounts.reduce((sum, n) => sum + n, 0) / poultryCounts.length
+        : 0;
+
+    const gramsPerHenDay =
+      kgAlimento > 0 && daysInMonth > 0 && avgAvesMes > 0
+        ? (kgAlimento * 1000) / (daysInMonth * avgAvesMes)
+        : null;
+
     return {
       monthLabel,
       totalHuevosMes,
       huevosVendidosMes,
       netoMes,
       gananciaMes,
+      gastosMes,
+      kgAlimento,
+      gramsPerHenDay,
+      daysInMonth,
+      avgAvesMes,
     };
   });
+
   const totalHuevosAnual = monthlySummaryRows.reduce((sum, r) => sum + r.totalHuevosMes, 0);
   const totalVentasAnual = monthlySummaryRows.reduce((sum, r) => sum + r.netoMes, 0);
   const totalHuevosVendidosAnual = monthlySummaryRows.reduce((sum, r) => sum + r.huevosVendidosMes, 0);
+  const totalGastosAnual = monthlySummaryRows.reduce((sum, r) => sum + r.gastosMes, 0);
+  const totalKgAlimentoAnual = monthlySummaryRows.reduce((sum, r) => sum + r.kgAlimento, 0);
   const precioPromedioHuevoAnual =
     totalHuevosVendidosAnual > 0 ? totalVentasAnual / totalHuevosVendidosAnual : 0;
+
+  let gramsAnualNumerator = 0;
+  let gramsAnualDenominator = 0;
+  for (const row of monthlySummaryRows) {
+    if (row.kgAlimento > 0 && row.daysInMonth > 0 && row.avgAvesMes > 0) {
+      gramsAnualNumerator += row.kgAlimento * 1000;
+      gramsAnualDenominator += row.daysInMonth * row.avgAvesMes;
+    }
+  }
+  const gramsPerHenDayAnual =
+    gramsAnualDenominator > 0 ? gramsAnualNumerator / gramsAnualDenominator : null;
 
   const handleExportData = async () => {
     if (!organizationId) return;
@@ -610,10 +680,23 @@ export default function Estadisticas() {
       </div>
 
       <Card padding="md">
-        <h3 className="text-lg font-semibold text-gray-900 mb-2">Resumen Mensual</h3>
-        <p className="text-sm text-gray-600 mb-4">
-          Vista tipo planilla: totales por mes del año {summaryCalendarYear} (toda la organización).
-        </p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Resumen Mensual</h3>
+            <p className="text-sm text-gray-600">
+              Vista tipo planilla: totales por mes del año {summaryCalendarYear} (toda la
+              organización).
+            </p>
+          </div>
+          <div className="w-full sm:w-40 shrink-0">
+            <Select
+              label="Año"
+              options={summaryYearOptions}
+              value={summaryYear}
+              onChange={(e) => setSummaryYear(e.target.value)}
+            />
+          </div>
+        </div>
         {summaryLoading ? (
           <p className="text-sm text-gray-500">Cargando resumen…</p>
         ) : (
@@ -627,6 +710,9 @@ export default function Estadisticas() {
                     <th className="px-3 py-2 font-semibold text-gray-700">Huevos Vendidos</th>
                     <th className="px-3 py-2 font-semibold text-gray-700">Neto ($ ventas)</th>
                     <th className="px-3 py-2 font-semibold text-gray-700">Total ($ ganancia)</th>
+                    <th className="px-3 py-2 font-semibold text-gray-700">Total Gastos ($)</th>
+                    <th className="px-3 py-2 font-semibold text-gray-700">Kg Alimento</th>
+                    <th className="px-3 py-2 font-semibold text-gray-700">g/ave/día</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -643,12 +729,37 @@ export default function Estadisticas() {
                       >
                         {formatArs(row.gananciaMes)}
                       </td>
+                      <td className="px-3 py-2 tabular-nums text-gray-800">{formatArs(row.gastosMes)}</td>
+                      <td className="px-3 py-2 tabular-nums text-gray-800">
+                        {row.kgAlimento > 0 ? row.kgAlimento.toFixed(2) : '—'}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums text-gray-800">
+                        {row.gramsPerHenDay != null ? row.gramsPerHenDay.toFixed(1) : '—'}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
+                <tfoot>
+                  <tr className="border-t border-gray-200 bg-gray-50 font-semibold text-gray-900">
+                    <td className="px-3 py-2">TOTAL</td>
+                    <td className="px-3 py-2 tabular-nums">{totalHuevosAnual}</td>
+                    <td className="px-3 py-2 tabular-nums">{totalHuevosVendidosAnual}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatArs(totalVentasAnual)}</td>
+                    <td className="px-3 py-2 tabular-nums">
+                      {formatArs(totalVentasAnual - totalGastosAnual)}
+                    </td>
+                    <td className="px-3 py-2 tabular-nums">{formatArs(totalGastosAnual)}</td>
+                    <td className="px-3 py-2 tabular-nums">
+                      {totalKgAlimentoAnual > 0 ? totalKgAlimentoAnual.toFixed(2) : '—'}
+                    </td>
+                    <td className="px-3 py-2 tabular-nums">
+                      {gramsPerHenDayAnual != null ? gramsPerHenDayAnual.toFixed(1) : '—'}
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
-            <div className="mt-4 grid gap-2 rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-800 sm:grid-cols-3">
+            <div className="mt-4 grid gap-2 rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-800 sm:grid-cols-2 lg:grid-cols-5">
               <p>
                 <span className="font-semibold">Total Huevos {summaryCalendarYear}:</span>{' '}
                 <span className="tabular-nums">{totalHuevosAnual}</span>
@@ -660,6 +771,16 @@ export default function Estadisticas() {
               <p>
                 <span className="font-semibold">Precio Promedio por Huevo:</span>{' '}
                 <span className="tabular-nums">{formatArs(precioPromedioHuevoAnual)}</span>
+              </p>
+              <p>
+                <span className="font-semibold">Total Gastos {summaryCalendarYear}:</span>{' '}
+                <span className="tabular-nums">{formatArs(totalGastosAnual)}</span>
+              </p>
+              <p>
+                <span className="font-semibold">Kg Alimento {summaryCalendarYear}:</span>{' '}
+                <span className="tabular-nums">
+                  {totalKgAlimentoAnual > 0 ? totalKgAlimentoAnual.toFixed(2) : '—'}
+                </span>
               </p>
             </div>
           </>
