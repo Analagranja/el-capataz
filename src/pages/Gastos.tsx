@@ -1,6 +1,8 @@
 import React from 'react';
-import { Expense, Gallinero } from '../types';
+import { Expense, FeedConsumptionMonthly, FeedLog, Gallinero } from '../types';
 import { expensesService } from '../services/expenses';
+import { feedConsumptionMonthlyService } from '../services/feedConsumptionMonthly';
+import { feedLogsService } from '../services/feedLogs';
 import { gallinerosService } from '../services/gallineros';
 import { useAuth } from '../contexts/AuthContext';
 import { useBumpDashboardMetrics } from '../contexts/DashboardMetricsRefreshContext';
@@ -23,8 +25,47 @@ function formatLocalDate(dateText: string) {
   return `${day}/${month}/${year}`;
 }
 
-function isAlimento(description: string): boolean {
-  return description.trim().toLowerCase().includes('alimento');
+function isAlimento(category: string): boolean {
+  return category === 'Alimento';
+}
+
+const EXPENSE_CATEGORIES = [
+  'Alimento',
+  'Maples / Packaging',
+  'Transporte',
+  'Veterinario',
+  'Mantenimiento',
+  'Otro',
+];
+
+const DEFAULT_OTROS_CATEGORY = EXPENSE_CATEGORIES.find((c) => c !== 'Alimento') ?? 'Maples / Packaging';
+
+function getDefaultFormData(category = 'Alimento') {
+  return {
+    date: todayLocalYmd(),
+    category,
+    customDescription: '' as string,
+    unit: 'kg' as 'kg' | 'bolsas',
+    quantity_kg: 0,
+    bags_count: 0,
+    bag_weight_kg: getSavedBagWeight(),
+    bag_price: 0,
+    total_price: 0,
+    gallinero_id: null as string | null,
+  };
+}
+
+function expenseCategoryLabel(description: string): string {
+  return EXPENSE_CATEGORIES.includes(description) ? description : 'Otro';
+}
+
+function expenseDetailLabel(description: string): string {
+  return EXPENSE_CATEGORIES.includes(description) ? '—' : description;
+}
+
+function consumptionGallineroIdFromFilter(filterGallinero: string): string | null {
+  if (filterGallinero === 'all' || filterGallinero === 'general') return null;
+  return filterGallinero;
 }
 
 function getSavedBagWeight(): number {
@@ -56,17 +97,27 @@ export default function Gastos() {
   const now = React.useMemo(() => new Date(), []);
   const [expenses, setExpenses] = React.useState<Expense[]>([]);
   const [gallineros, setGallineros] = React.useState<Gallinero[]>([]);
+  const [activeTab, setActiveTab] = React.useState<'alimento' | 'otros'>('alimento');
   const [filterGallinero, setFilterGallinero] = React.useState<string>('all');
   const [selectedYear, setSelectedYear] = React.useState<string>(String(now.getFullYear()));
   const [selectedMonth, setSelectedMonth] = React.useState<string>(
     String(now.getMonth() + 1).padStart(2, '0')
   );
   const [loading, setLoading] = React.useState(true);
+  const [feedLogs, setFeedLogs] = React.useState<FeedLog[]>([]);
+  const [consumption, setConsumption] = React.useState<FeedConsumptionMonthly | null>(null);
+  const [consumptionLoading, setConsumptionLoading] = React.useState(false);
+  const [consumptionModalOpen, setConsumptionModalOpen] = React.useState(false);
+  const [consumptionForm, setConsumptionForm] = React.useState({
+    kg_consumed: '',
+    notes: '',
+  });
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [formData, setFormData] = React.useState({
     date: todayLocalYmd(),
-    description: 'Alimento',
+    category: 'Alimento' as string,
+    customDescription: '' as string,
     unit: 'kg' as 'kg' | 'bolsas',
     quantity_kg: 0,
     bags_count: 0,
@@ -113,11 +164,20 @@ export default function Gastos() {
       try {
         setLoading(true);
         const { fromYmd, toYmd } = boundsForYearMonthFilter(selectedYear, selectedMonth);
-        const data = await expensesService.getAllRange(organizationId, fromYmd, toYmd);
-        if (!cancelled) setExpenses(data);
+        const [expensesData, feedLogsData] = await Promise.all([
+          expensesService.getAllRange(organizationId, fromYmd, toYmd),
+          feedLogsService.getAllRange(organizationId, fromYmd, toYmd),
+        ]);
+        if (!cancelled) {
+          setExpenses(expensesData);
+          setFeedLogs(feedLogsData);
+        }
       } catch (error) {
         console.error('Error loading expenses:', error);
-        if (!cancelled) setExpenses([]);
+        if (!cancelled) {
+          setExpenses([]);
+          setFeedLogs([]);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -127,50 +187,93 @@ export default function Gastos() {
     };
   }, [organizationId, selectedYear, selectedMonth]);
 
+  React.useEffect(() => {
+    if (!organizationId || !selectedMonth) {
+      setConsumption(null);
+      return;
+    }
+    const year = Number(selectedYear);
+    const month = Number(selectedMonth);
+    if (!Number.isFinite(year) || !Number.isFinite(month)) {
+      setConsumption(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        setConsumptionLoading(true);
+        const gallineroId = consumptionGallineroIdFromFilter(filterGallinero);
+        const data = await feedConsumptionMonthlyService.getByPeriod(
+          organizationId,
+          year,
+          month,
+          gallineroId
+        );
+        if (!cancelled) setConsumption(data);
+      } catch (error) {
+        console.error('Error loading feed consumption:', error);
+        if (!cancelled) setConsumption(null);
+      } finally {
+        if (!cancelled) setConsumptionLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [organizationId, selectedYear, selectedMonth, filterGallinero]);
+
   const reloadExpenses = async () => {
     if (!organizationId) return;
     const { fromYmd, toYmd } = boundsForYearMonthFilter(selectedYear, selectedMonth);
-    const data = await expensesService.getAllRange(organizationId, fromYmd, toYmd);
-    setExpenses(data);
+    const [expensesData, feedLogsData] = await Promise.all([
+      expensesService.getAllRange(organizationId, fromYmd, toYmd),
+      feedLogsService.getAllRange(organizationId, fromYmd, toYmd),
+    ]);
+    setExpenses(expensesData);
+    setFeedLogs(feedLogsData);
   };
+
+  const reloadConsumption = async () => {
+    if (!organizationId || !selectedMonth) {
+      setConsumption(null);
+      return;
+    }
+    const year = Number(selectedYear);
+    const month = Number(selectedMonth);
+    if (!Number.isFinite(year) || !Number.isFinite(month)) return;
+    const gallineroId = consumptionGallineroIdFromFilter(filterGallinero);
+    const data = await feedConsumptionMonthlyService.getByPeriod(
+      organizationId,
+      year,
+      month,
+      gallineroId
+    );
+    setConsumption(data);
+  };
+
+  const defaultCategoryForTab = (tab: 'alimento' | 'otros') =>
+    tab === 'alimento' ? 'Alimento' : DEFAULT_OTROS_CATEGORY;
 
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setEditingId(null);
-    setFormData({
-      date: todayLocalYmd(),
-      description: 'Alimento',
-      unit: 'kg',
-      quantity_kg: 0,
-      bags_count: 0,
-      bag_weight_kg: getSavedBagWeight(),
-      bag_price: 0,
-      total_price: 0,
-      gallinero_id: null,
-    });
+    setFormData(getDefaultFormData(defaultCategoryForTab(activeTab)));
   };
 
   const openNewExpenseModal = () => {
     setEditingId(null);
-    setFormData({
-      date: todayLocalYmd(),
-      description: 'Alimento',
-      unit: 'kg',
-      quantity_kg: 0,
-      bags_count: 0,
-      bag_weight_kg: getSavedBagWeight(),
-      bag_price: 0,
-      total_price: 0,
-      gallinero_id: null,
-    });
+    setFormData(getDefaultFormData(defaultCategoryForTab(activeTab)));
     setIsModalOpen(true);
   };
 
   const handleOpenEdit = (expense: Expense) => {
+    const cat = EXPENSE_CATEGORIES.includes(expense.description) ? expense.description : 'Otro';
+    const customDesc = cat === 'Otro' ? expense.description : '';
     setEditingId(expense.id);
     setFormData({
       date: expense.date.slice(0, 10),
-      description: expense.description,
+      category: cat,
+      customDescription: customDesc,
       unit: 'kg',
       quantity_kg: expense.quantity_kg,
       bags_count: 0,
@@ -207,21 +310,77 @@ export default function Gastos() {
     return expenses.filter((e) => e.gallinero_id === filterGallinero);
   }, [expenses, filterGallinero]);
 
+  const openConsumptionModal = () => {
+    setConsumptionForm({
+      kg_consumed: consumption ? String(consumption.kg_consumed) : '',
+      notes: consumption?.notes ?? '',
+    });
+    setConsumptionModalOpen(true);
+  };
+
+  const handleCloseConsumptionModal = () => {
+    setConsumptionModalOpen(false);
+    setConsumptionForm({ kg_consumed: '', notes: '' });
+  };
+
+  const handleSaveConsumption = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!organizationId || !selectedMonth) return;
+    const year = Number(selectedYear);
+    const month = Number(selectedMonth);
+    const kg = parseFloat(consumptionForm.kg_consumed);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(kg) || kg < 0) return;
+    try {
+      const gallineroId = consumptionGallineroIdFromFilter(filterGallinero);
+      await feedConsumptionMonthlyService.upsert(
+        organizationId,
+        year,
+        month,
+        kg,
+        consumptionForm.notes,
+        gallineroId
+      );
+      await reloadConsumption();
+      handleCloseConsumptionModal();
+    } catch (error) {
+      console.error('Error saving feed consumption:', error);
+    }
+  };
+
+  const handleDeleteConsumption = async () => {
+    if (!organizationId || !consumption) return;
+    if (!window.confirm('¿Eliminar el consumo declarado de este mes?')) return;
+    try {
+      await feedConsumptionMonthlyService.delete(organizationId, consumption.id);
+      setConsumption(null);
+    } catch (error) {
+      console.error('Error deleting feed consumption:', error);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!organizationId) return;
-    const alimento = isAlimento(formData.description);
-    const quantityKg =
-      alimento && formData.unit === 'bolsas'
-        ? (formData.bags_count || 0) * (formData.bag_weight_kg || 0)
-        : formData.quantity_kg;
+    const alimento = isAlimento(formData.category);
+    const description =
+      formData.category === 'Otro' ? formData.customDescription : formData.category;
 
-    if (quantityKg <= 0) return;
+    let quantityKg = 0;
+    let computedTotalPrice = formData.total_price;
 
-    const computedTotalPrice =
-      alimento && formData.unit === 'bolsas'
-        ? (formData.bags_count || 0) * (formData.bag_price || 0)
-        : formData.total_price;
+    if (alimento) {
+      quantityKg =
+        formData.unit === 'bolsas'
+          ? (formData.bags_count || 0) * (formData.bag_weight_kg || 0)
+          : formData.quantity_kg;
+      if (quantityKg <= 0) return;
+      computedTotalPrice =
+        formData.unit === 'bolsas'
+          ? (formData.bags_count || 0) * (formData.bag_price || 0)
+          : formData.total_price;
+    } else if (computedTotalPrice <= 0) {
+      return;
+    }
 
     try {
       if (editingId) {
@@ -229,7 +388,7 @@ export default function Gastos() {
           organizationId,
           editingId,
           formData.date,
-          formData.description,
+          description,
           quantityKg,
           computedTotalPrice,
           formData.gallinero_id ?? null
@@ -238,7 +397,7 @@ export default function Gastos() {
         await expensesService.create(
           organizationId,
           formData.date,
-          formData.description,
+          description,
           quantityKg,
           computedTotalPrice,
           formData.gallinero_id ?? null
@@ -268,9 +427,80 @@ export default function Gastos() {
     }
   };
 
-  const totalExpenses = filteredExpenses.reduce((sum, e) => sum + e.total_price, 0);
-  const totalKg = filteredExpenses.reduce((sum, e) => sum + e.quantity_kg, 0);
-  const isAlimentoForm = isAlimento(formData.description);
+  const filteredFeedLogs = React.useMemo(() => {
+    if (filterGallinero === 'all') return feedLogs;
+    if (filterGallinero === 'general') return [];
+    return feedLogs.filter((log) => log.gallinero_id === filterGallinero);
+  }, [feedLogs, filterGallinero]);
+
+  const totalBolsasCompradas = React.useMemo(() => {
+    const bolsasLogs = filteredFeedLogs.filter(
+      (log) => log.tipo === 'bolsas' && log.cantidad_bolsas != null
+    );
+    if (bolsasLogs.length === 0) return null;
+    return bolsasLogs.reduce((sum, log) => sum + (log.cantidad_bolsas ?? 0), 0);
+  }, [filteredFeedLogs]);
+
+  const selectedMonthLabel = React.useMemo(
+    () => GASTOS_MONTH_OPTIONS.find((o) => o.value === selectedMonth)?.label ?? selectedMonth,
+    [selectedMonth]
+  );
+
+  const consumptionGallineroLabel = React.useMemo(() => {
+    if (filterGallinero === 'all' || filterGallinero === 'general') return 'Toda la granja';
+    return gallineros.find((g) => g.id === filterGallinero)?.name ?? 'Gallinero';
+  }, [filterGallinero, gallineros]);
+
+  const poultryCountForConsumption = React.useMemo(() => {
+    if (filterGallinero !== 'all' && filterGallinero !== 'general') {
+      const g = gallineros.find((item) => item.id === filterGallinero);
+      return g?.current_count ?? 0;
+    }
+    return gallineros.reduce((sum, g) => sum + (g.current_count ?? 0), 0);
+  }, [filterGallinero, gallineros]);
+
+  const gramsPerHenPerDay = React.useMemo(() => {
+    if (!consumption || poultryCountForConsumption <= 0) return null;
+    const year = Number(selectedYear);
+    const month = Number(selectedMonth);
+    if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+    const daysInMonth = new Date(year, month, 0).getDate();
+    if (daysInMonth <= 0) return null;
+    return (consumption.kg_consumed * 1000) / (daysInMonth * poultryCountForConsumption);
+  }, [consumption, poultryCountForConsumption, selectedYear, selectedMonth]);
+
+  const alimentoExpenses = React.useMemo(
+    () => filteredExpenses.filter((e) => e.description === 'Alimento'),
+    [filteredExpenses]
+  );
+
+  const otrosExpenses = React.useMemo(
+    () => filteredExpenses.filter((e) => e.description !== 'Alimento'),
+    [filteredExpenses]
+  );
+
+  const totalAlimentoInvertido = alimentoExpenses.reduce((sum, e) => sum + e.total_price, 0);
+  const totalAlimentoKg = alimentoExpenses.reduce((sum, e) => sum + e.quantity_kg, 0);
+  const totalOtrosGastos = otrosExpenses.reduce((sum, e) => sum + e.total_price, 0);
+
+  const renderExpenseActions = (row: Expense) => (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        title="Editar gasto"
+        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-sky-700 shadow-sm transition-colors hover:border-sky-200 hover:bg-sky-50 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-offset-1"
+        onClick={() => handleOpenEdit(row)}
+      >
+        <Pencil className="h-4 w-4" strokeWidth={2} aria-hidden />
+        <span className="sr-only">Editar</span>
+      </button>
+      <Button variant="danger" size="sm" type="button" title="Eliminar gasto" onClick={() => handleDelete(row.id)}>
+        <Trash2 size={16} aria-hidden />
+      </Button>
+    </div>
+  );
+
+  const isAlimentoForm = isAlimento(formData.category);
   const kilosFromBags = (formData.bags_count || 0) * (formData.bag_weight_kg || 0);
   const totalFromBagsPrice = (formData.bags_count || 0) * (formData.bag_price || 0);
 
@@ -284,26 +514,70 @@ export default function Gastos() {
         <h2 className="text-3xl font-bold text-gray-900">Gastos</h2>
         <Button variant="primary" onClick={openNewExpenseModal}>
           <Plus size={20} />
-          Nuevo Gasto
+          {activeTab === 'alimento' ? 'Nuevo gasto de alimento' : 'Nuevo otro gasto'}
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card padding="md" hover>
-          <p className="text-sm text-gray-600 mb-1">Total Comprado (kg)</p>
-          <p className="text-2xl font-bold text-gray-900">{totalKg.toFixed(2)}</p>
-        </Card>
-        <Card padding="md" hover>
-          <p className="text-sm text-gray-600 mb-1">Total invertido (período)</p>
-          <p className="text-2xl font-bold text-gray-900">{formatArs(totalExpenses)}</p>
-        </Card>
-        <Card padding="md" hover>
-          <p className="text-sm text-gray-600 mb-1">Costo Promedio por kg</p>
-          <p className="text-2xl font-bold text-gray-900">
-            {formatArs(totalKg > 0 ? totalExpenses / totalKg : 0)}
-          </p>
-        </Card>
+      <div className="flex border-b border-gray-200">
+        <button
+          type="button"
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            activeTab === 'alimento'
+              ? 'border-green-600 text-green-700'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+          onClick={() => setActiveTab('alimento')}
+        >
+          Alimento
+        </button>
+        <button
+          type="button"
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            activeTab === 'otros'
+              ? 'border-green-600 text-green-700'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+          onClick={() => setActiveTab('otros')}
+        >
+          Otros gastos
+        </button>
       </div>
+
+      {activeTab === 'alimento' ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <Card padding="md" hover>
+            <p className="text-sm text-gray-600 mb-1">Total Comprado (kg)</p>
+            <p className="text-2xl font-bold text-gray-900">{totalAlimentoKg.toFixed(2)}</p>
+          </Card>
+          <Card padding="md" hover>
+            <p className="text-sm text-gray-600 mb-1">Total bolsas compradas</p>
+            <p className="text-2xl font-bold text-gray-900">
+              {totalBolsasCompradas != null ? totalBolsasCompradas : '—'}
+            </p>
+          </Card>
+          <Card padding="md" hover>
+            <p className="text-sm text-gray-600 mb-1">Total invertido en alimento ($)</p>
+            <p className="text-2xl font-bold text-gray-900">{formatArs(totalAlimentoInvertido)}</p>
+          </Card>
+          <Card padding="md" hover>
+            <p className="text-sm text-gray-600 mb-1">Costo Promedio por kg</p>
+            <p className="text-2xl font-bold text-gray-900">
+              {formatArs(totalAlimentoKg > 0 ? totalAlimentoInvertido / totalAlimentoKg : 0)}
+            </p>
+          </Card>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card padding="md" hover>
+            <p className="text-sm text-gray-600 mb-1">Total otros gastos ($)</p>
+            <p className="text-2xl font-bold text-gray-900">{formatArs(totalOtrosGastos)}</p>
+          </Card>
+          <Card padding="md" hover>
+            <p className="text-sm text-gray-600 mb-1">Cantidad de registros</p>
+            <p className="text-2xl font-bold text-gray-900">{otrosExpenses.length}</p>
+          </Card>
+        </div>
+      )}
 
       <Card padding="md">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -328,55 +602,121 @@ export default function Gastos() {
         />
       </Card>
 
-      <Card padding="none">
-        <Table
-          columns={[
-            {
-              key: 'date',
-              label: 'Fecha',
-              render: (value) => formatLocalDate(String(value)),
-            },
-            { key: 'description', label: 'Descripción' },
-            {
-              key: 'quantity_kg',
-              label: 'Cantidad (kg)',
-              render: (value) => `${value.toFixed(2)} kg`,
-            },
-            {
-              key: 'total_price',
-              label: 'Total',
-              render: (value) => formatArs(value as number),
-            },
-            {
-              key: 'gallinero_name',
-              label: 'Gallinero',
-              render: (_value, row: Expense) =>
-                row.gallinero_id == null ? 'General' : row.gallinero_name?.trim() || 'General',
-            },
-            {
-              key: 'id',
-              label: 'Acciones',
-              render: (_value, row: Expense) => (
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    title="Editar gasto"
-                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-sky-700 shadow-sm transition-colors hover:border-sky-200 hover:bg-sky-50 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-offset-1"
-                    onClick={() => handleOpenEdit(row)}
-                  >
-                    <Pencil className="h-4 w-4" strokeWidth={2} aria-hidden />
-                    <span className="sr-only">Editar</span>
-                  </button>
-                  <Button variant="danger" size="sm" type="button" title="Eliminar gasto" onClick={() => handleDelete(row.id)}>
-                    <Trash2 size={16} aria-hidden />
-                  </Button>
-                </div>
-              ),
-            },
-          ]}
-          data={filteredExpenses}
-        />
-      </Card>
+      {activeTab === 'alimento' && (
+        <Card padding="md">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Consumo de alimento del período</h3>
+          {selectedMonth === '' ? (
+            <p className="text-gray-600">Seleccioná un mes para ver el consumo declarado</p>
+          ) : consumptionLoading ? (
+            <p className="text-sm text-gray-500">Cargando...</p>
+          ) : consumption ? (
+            <div className="space-y-3">
+              <p className="text-gray-900">
+                Kg consumidos declarados: <strong>{consumption.kg_consumed.toFixed(2)} kg</strong>
+              </p>
+              <p className="text-gray-900">
+                Gramos por ave por día:{' '}
+                <strong>
+                  {gramsPerHenPerDay != null ? `${gramsPerHenPerDay.toFixed(1)} g` : 'Sin datos'}
+                </strong>
+              </p>
+              {consumption.notes?.trim() ? (
+                <p className="text-sm text-gray-500">{consumption.notes}</p>
+              ) : null}
+              <div className="flex flex-wrap gap-2 pt-1">
+                <Button variant="secondary" size="sm" type="button" onClick={openConsumptionModal}>
+                  Editar
+                </Button>
+                <Button variant="danger" size="sm" type="button" onClick={handleDeleteConsumption}>
+                  Eliminar
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-gray-600">No hay consumo declarado para este mes</p>
+              <Button variant="primary" size="sm" type="button" onClick={openConsumptionModal}>
+                Declarar consumo
+              </Button>
+            </div>
+          )}
+        </Card>
+      )}
+
+      {activeTab === 'alimento' ? (
+        <Card padding="none">
+          <Table
+            columns={[
+              {
+                key: 'date',
+                label: 'Fecha',
+                render: (value) => formatLocalDate(String(value)),
+              },
+              {
+                key: 'quantity_kg',
+                label: 'Cantidad (kg)',
+                render: (value) => `${Number(value).toFixed(2)} kg`,
+              },
+              {
+                key: 'total_price',
+                label: 'Total',
+                render: (value) => formatArs(value as number),
+              },
+              {
+                key: 'gallinero_name',
+                label: 'Gallinero',
+                render: (_value, row: Expense) =>
+                  row.gallinero_id == null ? 'General' : row.gallinero_name?.trim() || 'General',
+              },
+              {
+                key: 'id',
+                label: 'Acciones',
+                render: (_value, row: Expense) => renderExpenseActions(row),
+              },
+            ]}
+            data={alimentoExpenses}
+          />
+        </Card>
+      ) : (
+        <Card padding="none">
+          <Table
+            columns={[
+              {
+                key: 'date',
+                label: 'Fecha',
+                render: (value) => formatLocalDate(String(value)),
+              },
+              {
+                key: 'category',
+                label: 'Categoría',
+                render: (_value, row: Expense) => expenseCategoryLabel(row.description),
+              },
+              {
+                key: 'detail',
+                label: 'Descripción',
+                render: (_value, row: Expense) => expenseDetailLabel(row.description),
+              },
+              {
+                key: 'total_price',
+                label: 'Total',
+                render: (value) => formatArs(value as number),
+              },
+              {
+                key: 'gallinero_name',
+                label: 'Gallinero',
+                render: (_value, row: Expense) =>
+                  row.gallinero_id == null ? 'General' : row.gallinero_name?.trim() || 'General',
+              },
+              {
+                key: 'id',
+                label: 'Acciones',
+                render: (_value, row: Expense) => renderExpenseActions(row),
+              },
+            ]}
+            data={otrosExpenses}
+          />
+        </Card>
+      )}
 
       <Modal isOpen={isModalOpen} onClose={handleCloseModal} title={editingId ? 'Editar Gasto' : 'Nuevo Gasto'}>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -388,13 +728,23 @@ export default function Gastos() {
             required
           />
 
-          <Input
-            label="Descripción"
-            value={formData.description}
-            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-            placeholder="Ej: Alimento"
+          <Select
+            label="Categoría"
+            options={EXPENSE_CATEGORIES.map((cat) => ({ value: cat, label: cat }))}
+            value={formData.category}
+            onChange={(e) => setFormData({ ...formData, category: e.target.value })}
             required
           />
+
+          {formData.category === 'Otro' && (
+            <Input
+              label="Descripción"
+              value={formData.customDescription}
+              onChange={(e) => setFormData({ ...formData, customDescription: e.target.value })}
+              placeholder="Describí el gasto"
+              required
+            />
+          )}
 
           <Select
             label="Asignar a gallinero (opcional)"
@@ -457,7 +807,7 @@ export default function Gastos() {
                 Total calculado automáticamente: <strong>{formatArs(totalFromBagsPrice)}</strong>
               </div>
             </>
-          ) : (
+          ) : isAlimentoForm ? (
             <Input
               label="Cantidad (kg)"
               type="number"
@@ -467,7 +817,7 @@ export default function Gastos() {
               onChange={(e) => setFormData({ ...formData, quantity_kg: parseFloat(e.target.value) || 0 })}
               required
             />
-          )}
+          ) : null}
 
           {isAlimentoForm && formData.unit === 'bolsas' ? (
             <Input
@@ -496,6 +846,52 @@ export default function Gastos() {
               {editingId ? 'Guardar cambios' : 'Guardar'}
             </Button>
             <Button variant="secondary" type="button" onClick={handleCloseModal} className="flex-1">
+              Cancelar
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        isOpen={consumptionModalOpen}
+        onClose={handleCloseConsumptionModal}
+        title={consumption ? 'Editar consumo' : 'Declarar consumo'}
+      >
+        <form onSubmit={handleSaveConsumption} className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Mes seleccionado: <strong>{selectedMonthLabel}</strong> {selectedYear}
+          </p>
+          <p className="text-sm text-gray-600">
+            Gallinero: <strong>{consumptionGallineroLabel}</strong>
+          </p>
+          <Input
+            label="Kg consumidos en el mes"
+            type="number"
+            step="0.01"
+            min="0"
+            value={consumptionForm.kg_consumed}
+            onChange={(e) => setConsumptionForm({ ...consumptionForm, kg_consumed: e.target.value })}
+            required
+          />
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Notas (opcional)</label>
+            <textarea
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm min-h-[72px]"
+              value={consumptionForm.notes}
+              onChange={(e) => setConsumptionForm({ ...consumptionForm, notes: e.target.value })}
+              placeholder="Opcional"
+            />
+          </div>
+          <div className="flex gap-2 pt-4">
+            <Button variant="primary" type="submit" className="flex-1">
+              Guardar
+            </Button>
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={handleCloseConsumptionModal}
+              className="flex-1"
+            >
               Cancelar
             </Button>
           </div>

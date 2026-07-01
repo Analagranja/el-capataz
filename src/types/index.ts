@@ -140,6 +140,18 @@ export interface FeedLog {
   created_at: string;
 }
 
+export interface FeedConsumptionMonthly {
+  id: string;
+  organization_id: string;
+  gallinero_id: string | null;
+  year: number;
+  month: number;
+  kg_consumed: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export type UserRole = 'admin' | 'operator' | 'vendedor';
 
 export type Page =
