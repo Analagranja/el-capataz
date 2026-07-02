@@ -20,10 +20,34 @@ const SALE_TYPE_OPTIONS: Array<{ value: Sale['type']; label: string }> = [
   { value: 'media_docena', label: 'Media Docena (6 huevos)' },
 ];
 
+const MONTH_NAMES = [
+  'Enero',
+  'Febrero',
+  'Marzo',
+  'Abril',
+  'Mayo',
+  'Junio',
+  'Julio',
+  'Agosto',
+  'Septiembre',
+  'Octubre',
+  'Noviembre',
+  'Diciembre',
+];
+
+const VENTAS_MONTH_OPTIONS = MONTH_NAMES.map((label, i) => ({
+  value: String(i + 1).padStart(2, '0'),
+  label,
+}));
+
 export default function Ventas() {
   const { organizationId } = useAuth();
   const [sales, setSales] = React.useState<Sale[]>([]);
   const [customers, setCustomers] = React.useState<Customer[]>([]);
+  const [selectedYear, setSelectedYear] = React.useState<string>(String(new Date().getFullYear()));
+  const [selectedMonth, setSelectedMonth] = React.useState<string>(
+    String(new Date().getMonth() + 1).padStart(2, '0')
+  );
   const [loading, setLoading] = React.useState(true);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [isQuickCustomerFormOpen, setIsQuickCustomerFormOpen] = React.useState(false);
@@ -61,12 +85,9 @@ export default function Ventas() {
     if (!organizationId) return;
     try {
       setLoading(true);
-      const now = new Date();
-      const year = now.getFullYear();
-      const month = now.getMonth(); // 0-based
-      const fromDate = `${year}-${String(month + 1).padStart(2, '0')}-01`;
-      const lastDay = new Date(year, month + 1, 0).getDate();
-      const toDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      const fromDate = `${selectedYear}-${selectedMonth}-01`;
+      const lastDay = new Date(Number(selectedYear), Number(selectedMonth), 0).getDate();
+      const toDate = `${selectedYear}-${selectedMonth}-${String(lastDay).padStart(2, '0')}`;
       const data = await salesService.getAllRange(organizationId, fromDate, toDate);
       setSales(data);
     } catch (error) {
@@ -78,6 +99,9 @@ export default function Ventas() {
 
   React.useEffect(() => {
     loadSales();
+  }, [organizationId, selectedYear, selectedMonth]);
+
+  React.useEffect(() => {
     loadCustomers();
   }, [organizationId]);
 
@@ -200,6 +224,16 @@ export default function Ventas() {
     0
   );
   const avgPricePerEgg = totalEggsSold > 0 ? totalSales / totalEggsSold : 0;
+  const periodLabel = `${MONTH_NAMES[Number(selectedMonth) - 1]} ${selectedYear}`;
+
+  const yearOptions = React.useMemo(
+    () =>
+      Array.from({ length: 6 }, (_, i) => {
+        const y = String(new Date().getFullYear() - i);
+        return { value: y, label: y };
+      }),
+    []
+  );
 
   if (loading) {
     return <div className="p-8 text-center text-gray-500">Cargando...</div>;
@@ -218,14 +252,14 @@ export default function Ventas() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card padding="md" hover>
           <div>
-            <p className="text-sm text-gray-600 mb-1">Total Ventas (mes actual)</p>
+            <p className="text-sm text-gray-600 mb-1">Total Ventas ({periodLabel})</p>
             <p className="text-2xl font-bold text-gray-900">{formatArs(totalSales)}</p>
           </div>
         </Card>
 
         <Card padding="md" hover>
           <div>
-            <p className="text-sm text-gray-600 mb-1">Huevos Vendidos (mes actual)</p>
+            <p className="text-sm text-gray-600 mb-1">Huevos Vendidos ({periodLabel})</p>
             <p className="text-2xl font-bold text-gray-900">{totalEggsSold}</p>
           </div>
         </Card>
@@ -239,6 +273,23 @@ export default function Ventas() {
           </div>
         </Card>
       </div>
+
+      <Card padding="md">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Select
+            label="Año"
+            options={yearOptions}
+            value={selectedYear}
+            onChange={(e) => setSelectedYear(e.target.value)}
+          />
+          <Select
+            label="Mes"
+            options={VENTAS_MONTH_OPTIONS}
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+          />
+        </div>
+      </Card>
 
       <Card padding="none">
         <Table
