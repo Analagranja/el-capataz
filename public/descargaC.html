@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>El Capataz — Gestión Avícola</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--green:#1a3a2a;--green-mid:#2d5a3d;--green-light:#e8f2ec;--cream:#faf7f0;--text:#1a1a1a;--muted:#666}
+body{font-family:'DM Sans',sans-serif;background:var(--cream);color:var(--text);overflow-x:hidden}
+.lang-bar{background:var(--green);padding:10px 20px;display:flex;justify-content:flex-end;gap:8px}
+.lang-btn{background:transparent;border:1px solid rgba(255,255,255,0.3);color:rgba(255,255,255,0.7);padding:4px 12px;border-radius:20px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif}
+.lang-btn.active{background:#fff;color:var(--green);border-color:#fff;font-weight:600}
+nav{padding:20px 40px;align-items:center;background:transparent;position:absolute;width:100%;top:44px;z-index:10;display:flex;justify-content:space-between}
+.logo{font-family:'Playfair Display',serif;font-weight:900;font-size:24px;color:var(--green);text-decoration:none}
+.nav-links{display:flex;gap:32px;align-items:center}
+.nav-links a{text-decoration:none;color:var(--text);font-weight:500;font-size:15px}
+.btn-nav{background:var(--green);color:#fff !important;padding:10px 20px;border-radius:30px;font-weight:600}
+/* HERO */
+.hero{padding:160px 20px 80px;text-align:center;max-width:900px;margin:0 auto;position:relative}
+.badge{background:var(--green-light);color:var(--green-mid);padding:6px 16px;border-radius:20px;font-size:14px;font-weight:600;display:inline-block;margin-bottom:24px}
+h1{font-family:'Playfair Display',serif;font-size:56px;line-height:1.15;color:var(--green);margin-bottom:24px;font-weight:900}
+.hero-sub{font-size:18px;color:var(--muted);line-height:1.6;margin-bottom:32px;max-width:650px;margin-left:auto;margin-right:auto}
+.hero-ctas{display:flex;gap:16px;justify-content:center;margin-bottom:48px}
+.cta-main{background:var(--green);color:#fff;text-decoration:none;padding:16px 32px;border-radius:30px;font-weight:600;font-size:16px;box-shadow:0 4px 12px rgba(26,58,42,0.15)}
+.cta-sec{background:transparent;color:var(--green);text-decoration:none;padding:16px 32px;border-radius:30px;font-weight:600;font-size:16px;border:1px solid var(--green)}
+/* STATS */
+.hero-stats{display:flex;gap:40px;justify-content:center;padding:32px 40px;background:#fff;border-radius:20px;box-shadow:0 4px 20px rgba(26,58,42,0.06);max-width:600px;margin:0 auto}
+.stat{text-align:center}
+.stat-num{font-family:'Playfair Display',serif;font-size:36px;font-weight:900;color:var(--green);display:block}
+.stat-label{font-size:13px;color:var(--muted);margin-top:4px}
+/* FEATURES */
+.section{padding:100px 40px;max-width:1200px;margin:0 auto}
+.section-tag{color:var(--green-mid);text-transform:uppercase;font-size:13px;letter-spacing:2px;font-weight:600;margin-bottom:12px;display:block;text-align:center}
+.section-title{font-family:'Playfair Display',serif;font-size:36px;color:var(--green);text-align:center;margin-bottom:60px;font-weight:700}
+.features-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:32px}
+.feat-card{background:#fff;padding:40px;border-radius:20px;box-shadow:0 4px 20px rgba(0,0,0,0.04);border:1px solid rgba(26,58,42,0.06)}
+.feat-icon{font-size:36px;margin-bottom:16px;display:block}
+.feat-card h3{font-family:'Playfair Display',serif;font-size:22px;color:var(--green);margin-bottom:12px}
+.feat-card p{color:var(--muted);line-height:1.6;font-size:15px}
+/* ABOUT */
+.about-block{display:flex;gap:60px;align-items:center;background:var(--green-light);padding:60px;border-radius:30px;margin-bottom:100px}
+.about-content{flex:1}
+.about-content .section-tag{text-align:left}
+.about-content h2{font-family:'Playfair Display',serif;font-size:32px;color:var(--green);margin-bottom:20px}
+.about-content p{color:var(--green-mid);line-height:1.6;font-size:16px}
+.about-img{flex:0 0 300px;border-radius:20px;overflow:hidden}
+.about-img img{width:100%;height:360px;object-fit:cover;display:block;border-radius:20px}
+/* PRICING */
+.pricing-card{background:#fff;max-width:460px;margin:0 auto;border-radius:24px;padding:50px 40px;box-shadow:0 10px 40px rgba(26,58,42,0.08);border:2px solid var(--green);position:relative;text-align:center}
+.price-head{font-size:16px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:12px}
+.price-amount{font-family:'Playfair Display',serif;font-size:48px;font-weight:900;color:var(--green);margin-bottom:8px}
+.price-period{font-size:16px;color:var(--muted)}
+.price-sub{font-size:14px;color:var(--green-mid);font-weight:600;margin:12px 0 32px;background:var(--green-light);padding:6px 12px;border-radius:20px;display:inline-block}
+.price-features{list-style:none;text-align:left;margin-bottom:40px;display:flex;flex-direction:column;gap:16px}
+.price-features li{display:flex;align-items:center;gap:12px;font-size:15px;color:var(--text)}
+.price-features li::before{content:"✓";color:var(--green-mid);font-weight:700;font-size:16px}
+.cta-price{display:block;background:var(--green);color:#fff;text-decoration:none;padding:16px;border-radius:30px;font-weight:600;font-size:16px;margin-bottom:16px;transition:opacity .2s}
+.cta-price:hover{opacity:.88}
+/* QUOTE */
+.quote-sec{background:var(--green);color:#fff;padding:100px 40px;text-align:center}
+.quote-max{max-width:800px;margin:0 auto}
+blockquote{font-family:'Playfair Display',serif;font-size:28px;line-height:1.4;margin-bottom:32px;font-style:italic}
+.author{font-size:16px;font-weight:600}
+.role{font-size:14px;color:rgba(255,255,255,0.7);margin-top:4px}
+footer{background:var(--green);padding:40px 20px;text-align:center;font-size:14px;color:rgba(255,255,255,0.5);border-top:1px solid rgba(255,255,255,0.1)}
+footer a{color:rgba(255,255,255,0.7);text-decoration:none}
+@media(max-width:768px){
+nav{padding:20px;top:44px}
+.nav-links{display:none}
+h1{font-size:36px}
+.hero{padding:120px 20px 60px}
+.hero-ctas{flex-direction:column;gap:12px}
+.hero-stats{flex-direction:column;gap:20px;padding:24px}
+.about-block{flex-direction:column;padding:30px;gap:30px}
+.about-img{flex:none;width:100%}
+.about-img img{height:260px}
+.section{padding:60px 20px}
+blockquote{font-size:22px}
+}
+</style>
+</head>
+<body>
+<div class="lang-bar">
+<button class="lang-btn active" onclick="setLang('es')">Español</button>
+<button class="lang-btn" onclick="setLang('en')">English</button>
+</div>
+<nav>
+<a href="#" class="logo">El Capataz</a>
+<div class="nav-links">
+<a href="#features" id="s1">Características</a>
+<a href="#about" id="s2">Nosotros</a>
+<a href="#pricing" id="s3">Precios</a>
+<a href="https://www.mercadopago.com.ar/subscriptions/checkout?preapproval_plan_id=4fd8ea4a31274e17adbbabd7c0eeaaba" class="btn-nav" id="cta1">Probar 14 Días Gratis</a>
+</div>
+</nav>
+
+<div class="hero">
+<span class="badge" id="badge">¡14 días de prueba sin cargo! 🐔</span>
+<h1 id="headline">El Capataz Digital<br>de tu Granja</h1>
+<p class="hero-sub" id="hero-sub">Controlá producción, sanidad y finanzas de tu granja de gallinas libres — desde el celular, en segundos.</p>
+<div class="hero-ctas">
+<a href="https://www.mercadopago.com.ar/subscriptions/checkout?preapproval_plan_id=4fd8ea4a31274e17adbbabd7c0eeaaba" class="cta-main" id="cta2">Comenzar Prueba Gratuita</a>
+<a href="https://elcapataz.lagranjagallinasfelices.com/" class="cta-sec" id="cta3">Ver la app</a>
+</div>
+<div class="hero-stats">
+<div class="stat"><span class="stat-num" id="stat1n">14</span><span class="stat-label" id="stat1l">días gratis</span></div>
+<div class="stat"><span class="stat-num" id="stat2n">5</span><span class="stat-label" id="stat2l">módulos integrados</span></div>
+<div class="stat"><span class="stat-num" id="stat3n">$40.000</span><span class="stat-label" id="stat3l">por mes ARS</span></div>
+</div>
+</div>
+
+<div class="section" id="features">
+<span class="section-tag" id="feat-tag">Funciones clave</span>
+<h2 class="section-title" id="feat-title">Todo lo que necesitás en un solo lugar</h2>
+<div class="features-grid">
+<div class="feat-card">
+<span class="feat-icon">🥚</span>
+<h3 id="f1t">Control de Producción</h3>
+<p id="f1d">Registrá huevos por gallinero, seguí el % de postura y exportá tus datos cuando quieras. La app calcula la edad en semanas automáticamente.</p>
+</div>
+<div class="feat-card">
+<span class="feat-icon">💉</span>
+<h3 id="f2t">Agenda Sanitaria</h3>
+<p id="f2d">Vacunas, desparasitaciones y tratamientos con alertas automáticas. Mantené el historial de salud de cada camada al día.</p>
+</div>
+<div class="feat-card">
+<span class="feat-icon">💰</span>
+<h3 id="f3t">Finanzas en Tiempo Real</h3>
+<p id="f3d">Ventas, gastos, clientes y rentabilidad. Asigná costos por gallinero o a la administración general. Sabés exactamente si tu granja gana dinero.</p>
+</div>
+<div class="feat-card">
+<span class="feat-icon">👥</span>
+<h3 id="f4t">Multi-usuario</h3>
+<p id="f4d">El dueño ve todo. El operario solo carga datos. Roles y permisos simples. Registrá bajas con causa y el sistema actualiza el inventario en vivo.</p>
+</div>
+</div>
+</div>
+
+<div class="section" id="about">
+<div class="about-block">
+<div class="about-content">
+<span class="section-tag" id="about-tag">La Historia</span>
+<h2 id="about-title">Hecha por una granjera, para granjeros</h2>
+<p id="about-text">Soy Ana, programadora y productora de huevos pastoriles en Vedia, Buenos Aires. Desarrollé El Capataz porque no existía ninguna herramienta pensada para granjas de gallinas libres. No fue ideado en una oficina, sino entre galpones y recolección de huevos orgánicos. La uso en mi propia granja todos los días.</p>
+</div>
+<div class="about-img">
+<img src="https://elcapataz.lagranjagallinasfelices.com/ana.jpg" alt="Ana con una de sus gallinas" onerror="this.style.display='none'">
+</div>
+</div>
+</div>
+
+<div class="section" id="pricing">
+<span class="section-tag" id="why-tag">Suscripción</span>
+<h2 class="section-title" id="why-title">Un plan único con todo incluido</h2>
+<div class="pricing-card">
+<span class="price-head" id="price-tag">Plan Premium Completo</span>
+<div class="price-amount" id="price-title">$40.000 <span class="price-period" id="period">/ mes</span></div>
+<span class="price-sub" id="trial">🎁 Primeros 14 días 100% Gratis</span>
+<p id="price-sub" style="font-size:14px;color:var(--muted);margin-bottom:24px;line-height:1.5;">Podés cancelar cuando quieras desde Mercado Pago. No se te cobrará nada hasta terminar la prueba.</p>
+<ul class="price-features">
+<li id="pl1">Gallineros y camadas ilimitadas</li>
+<li id="pl2">Gráficos de postura y rendimiento</li>
+<li id="pl3">Control financiero y de insumos</li>
+<li id="pl4">Agenda sanitaria con alertas</li>
+<li id="pl5">Multi-usuario con roles de operario</li>
+<li id="pl6">Exportación de reportes</li>
+<li id="pl7">Cancelación en un clic sin contratos</li>
+</ul>
+<a href="https://www.mercadopago.com.ar/subscriptions/checkout?preapproval_plan_id=4fd8ea4a31274e17adbbabd7c0eeaaba" class="cta-price" id="cta-price">Iniciar Prueba Gratis →</a>
+</div>
+</div>
+
+<div class="quote-sec">
+<div class="quote-max">
+<blockquote id="quote">"El bienestar de mis gallinas y el alimento sano son el corazón de mi granja. El Capataz es la herramienta que hace que todo eso además sea un negocio rentable."</blockquote>
+<div class="author" id="fname">Analía Dall'Asta</div>
+<div class="role" id="frole">Fundadora · La Granja Gallinas Felices · Vedia, Buenos Aires</div>
+</div>
+</div>
+<footer id="footer-text">
+© 2026 El Capataz — <a href="https://lagranjagallinasfelices.com">La Granja Gallinas Felices</a> · <a href="mailto:lagranjaelcapataz@gmail.com">lagranjaelcapataz@gmail.com</a>
+</footer>
+
+<script>
+const MP_LINK = 'https://www.mercadopago.com.ar/subscriptions/checkout?preapproval_plan_id=4fd8ea4a31274e17adbbabd7c0eeaaba';
+const t={
+es:{
+badge:'¡14 días de prueba sin cargo! 🐔',
+headline:'El Capataz Digital<br>de tu Granja',
+heroSub:'Controlá producción, sanidad y finanzas de tu granja de gallinas libres — desde el celular, en segundos.',
+cta1:'Probar 14 Días Gratis',
+cta2:'Comenzar Prueba Gratuita',
+cta3:'Ver la app',
+s1:'Características',s2:'Nosotros',s3:'Precios',
+stat1n:'14',stat1l:'días gratis',
+stat2n:'5',stat2l:'módulos integrados',
+stat3n:'$40.000',stat3l:'por mes ARS',
+featTag:'Funciones clave',
+featTitle:'Todo lo que necesitás en un solo lugar',
+f1t:'Control de Producción',
+f1d:'Registrá huevos por gallinero, seguí el % de postura y exportá tus datos cuando quieras. La app calcula la edad en semanas automáticamente.',
+f2t:'Agenda Sanitaria',
+f2d:'Vacunas, desparasitaciones y tratamientos con alertas automáticas. Mantené el historial de salud de cada camada al día.',
+f3t:'Finanzas en Tiempo Real',
+f3d:'Ventas, gastos, clientes y rentabilidad. Asigná costos por gallinero o a la administración general. Sabés exactamente si tu granja gana dinero.',
+f4t:'Multi-usuario',
+f4d:'El dueño ve todo. El operario solo carga datos. Roles y permisos simples. Registrá bajas con causa y el sistema actualiza el inventario en vivo.',
+aboutTag:'La Historia',
+aboutTitle:'Hecha por una granjera, para granjeros',
+aboutText:'Soy Ana, programadora y productora de huevos pastoriles en Vedia, Buenos Aires. Desarrollé El Capataz porque no existía ninguna herramienta pensada para granjas de gallinas libres. No fue ideado en una oficina, sino entre galpones y recolección de huevos orgánicos. La uso en mi propia granja todos los días.',
+whyTag:'Suscripción',
+whyTitle:'Un plan único con todo incluido',
+priceTag:'Plan Premium Completo',
+priceTitle:'$40.000 ',
+period:'/ mes',
+trial:'🎁 Primeros 14 días 100% Gratis',
+priceSub:'Podés cancelar cuando quieras desde Mercado Pago. No se te cobrará nada hasta terminar la prueba.',
+pl1:'Gallineros y camadas ilimitadas',
+pl2:'Gráficos de postura y rendimiento',
+pl3:'Control financiero y de insumos',
+pl4:'Agenda sanitaria con alertas',
+pl5:'Multi-usuario con roles de operario',
+pl6:'Exportación de reportes',
+pl7:'Cancelación en un clic sin contratos',
+ctaPrice:'Iniciar Prueba Gratis →',
+quote:'"El bienestar de mis gallinas y el alimento sano son el corazón de mi granja. El Capataz es la herramienta que hace que todo eso además sea un negocio rentable."',
+fname:"Analía Dall'Asta",
+frole:'Fundadora · La Granja Gallinas Felices · Vedia, Buenos Aires',
+footerText:'© 2026 El Capataz — <a href="https://lagranjagallinasfelices.com">La Granja Gallinas Felices</a> · <a href="mailto:lagranjaelcapataz@gmail.com">lagranjaelcapataz@gmail.com</a>'
+},
+en:{
+badge:'14-day free trial available! 🐔',
+headline:'Your Farm\'s<br>Digital Foreman',
+heroSub:'Track egg production, health, and finances of your free-range farm — from your phone, in seconds.',
+cta1:'Start 14-Day Free Trial',
+cta2:'Start Free Trial',
+cta3:'See the app',
+s1:'Features',s2:'About',s3:'Pricing',
+stat1n:'14',stat1l:'days free',
+stat2n:'5',stat2l:'integrated modules',
+stat3n:'$29',stat3l:'per month USD',
+featTag:'Key features',
+featTitle:'Everything you need in one place',
+f1t:'Production Control',
+f1d:'Log eggs per house, track lay percentages, and export your data anytime. The app automatically tracks flock age in weeks.',
+f2t:'Health Schedule',
+f2d:'Vaccines, deworming, and treatments with automatic alerts. Keep each flock\'s health history fully up to date.',
+f3t:'Real-Time Finances',
+f3d:'Sales, expenses, clients, and profitability. Assign costs per house or to general farm overhead. Know exactly if your farm is profitable.',
+f4t:'Multi-User',
+f4d:'The owner sees everything. The worker only enters data. Simple roles and permissions. Log bird losses with cause and inventory updates live.',
+aboutTag:'The Story',
+aboutTitle:'Built by a farmer, for farmers',
+aboutText:'I\'m Ana, a programmer and pasture-raised egg producer in Vedia, Buenos Aires. I built El Capataz because no tool existed for free-range farms. It wasn\'t designed in a tech hub — it was born inside mobile coops and organic egg collection loops. I use it on my own farm every day.',
+whyTag:'Subscription',
+whyTitle:'One simple all-inclusive plan',
+priceTag:'Full Premium Plan',
+priceTitle:'$29 ',
+period:'/ month',
+trial:'🎁 First 14 days 100% Free',
+priceSub:'Cancel anytime through Mercado Pago. No charges will apply before the trial ends.',
+pl1:'Unlimited houses and flocks',
+pl2:'Production & yield charts',
+pl3:'Expense and inventory tracking',
+pl4:'Health schedule with alerts',
+pl5:'Multi-user access with roles',
+pl6:'Report export',
+pl7:'Cancel anytime, no contracts',
+ctaPrice:'Start free trial →',
+quote:'"The welfare of my hens and healthy food are the heart of my farm. El Capataz is the tool that turns all of that into a profitable business as well."',
+fname:"Ana Dall'Asta",
+frole:'Founder · La Granja Gallinas Felices · Vedia, Buenos Aires',
+footerText:'© 2026 El Capataz — <a href="https://lagranjagallinasfelices.com">La Granja Gallinas Felices</a> · <a href="mailto:lagranjaelcapataz@gmail.com">lagranjaelcapataz@gmail.com</a>'
+}
+};
+function setLang(l){
+const d=t[l];
+document.querySelectorAll('.lang-btn').forEach((b,i)=>b.classList.toggle('active',i===(l==='es'?0:1)));
+document.getElementById('badge').innerText=d.badge;
+document.getElementById('headline').innerHTML=d.headline;
+document.getElementById('hero-sub').innerText=d.heroSub;
+document.getElementById('cta1').innerText=d.cta1;
+document.getElementById('cta2').innerText=d.cta2;
+document.getElementById('cta3').innerText=d.cta3;
+document.getElementById('s1').innerText=d.s1;
+document.getElementById('s2').innerText=d.s2;
+document.getElementById('s3').innerText=d.s3;
+document.getElementById('stat1n').innerText=d.stat1n;
+document.getElementById('stat1l').innerText=d.stat1l;
+document.getElementById('stat2n').innerText=d.stat2n;
+document.getElementById('stat2l').innerText=d.stat2l;
+document.getElementById('stat3n').innerText=d.stat3n;
+document.getElementById('stat3l').innerText=d.stat3l;
+document.getElementById('feat-tag').innerText=d.featTag;
+document.getElementById('feat-title').innerText=d.featTitle;
+document.getElementById('f1t').innerText=d.f1t;
+document.getElementById('f1d').innerText=d.f1d;
+document.getElementById('f2t').innerText=d.f2t;
+document.getElementById('f2d').innerText=d.f2d;
+document.getElementById('f3t').innerText=d.f3t;
+document.getElementById('f3d').innerText=d.f3d;
+document.getElementById('f4t').innerText=d.f4t;
+document.getElementById('f4d').innerText=d.f4d;
+document.getElementById('about-tag').innerText=d.aboutTag;
+document.getElementById('about-title').innerText=d.aboutTitle;
+document.getElementById('about-text').innerText=d.aboutText;
+document.getElementById('why-tag').innerText=d.whyTag;
+document.getElementById('why-title').innerText=d.whyTitle;
+document.getElementById('price-tag').innerText=d.priceTag;
+document.getElementById('price-title').innerHTML=d.priceTitle+'<span class="price-period">'+d.period+'</span>';
+document.getElementById('trial').innerText=d.trial;
+document.getElementById('price-sub').innerText=d.priceSub;
+document.getElementById('pl1').innerText=d.pl1;
+document.getElementById('pl2').innerText=d.pl2;
+document.getElementById('pl3').innerText=d.pl3;
+document.getElementById('pl4').innerText=d.pl4;
+document.getElementById('pl5').innerText=d.pl5;
+document.getElementById('pl6').innerText=d.pl6;
+document.getElementById('pl7').innerText=d.pl7;
+document.getElementById('cta-price').innerText=d.ctaPrice;
+document.getElementById('quote').innerText=d.quote;
+document.getElementById('fname').innerText=d.fname;
+document.getElementById('frole').innerText=d.frole;
+document.getElementById('footer-text').innerHTML=d.footerText;
+}
+</script>
+</body>
+</html>
+
+
