@@ -338,7 +338,8 @@ export default function Gastos() {
         month,
         kg,
         consumptionForm.notes,
-        gallineroId
+        gallineroId,
+        poultryCountForConsumption
       );
       await reloadConsumption();
       handleCloseConsumptionModal();
@@ -460,13 +461,18 @@ export default function Gastos() {
   }, [filterGallinero, gallineros]);
 
   const gramsPerHenPerDay = React.useMemo(() => {
-    if (!consumption || poultryCountForConsumption <= 0) return null;
+    if (!consumption) return null;
+    const hens =
+      consumption.hens_snapshot != null && consumption.hens_snapshot > 0
+        ? consumption.hens_snapshot
+        : poultryCountForConsumption;
+    if (hens <= 0) return null;
     const year = Number(selectedYear);
     const month = Number(selectedMonth);
     if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
     const daysInMonth = new Date(year, month, 0).getDate();
     if (daysInMonth <= 0) return null;
-    return (consumption.kg_consumed * 1000) / (daysInMonth * poultryCountForConsumption);
+    return (consumption.kg_consumed * 1000) / (daysInMonth * hens);
   }, [consumption, poultryCountForConsumption, selectedYear, selectedMonth]);
 
   const alimentoExpenses = React.useMemo(

@@ -14,13 +14,14 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts';
-import { ProductionRecord, Sale, Event, Gallinero, Expense, FeedLog } from '../types';
+import { ProductionRecord, Sale, Event, Gallinero, Expense, FeedLog, FeedConsumptionMonthly } from '../types';
 import { productionService, computeLayingPercentage } from '../services/production';
 import { salesService } from '../services/sales';
 import { eventsService } from '../services/events';
 import { gallinerosService } from '../services/gallineros';
 import { expensesService } from '../services/expenses';
 import { feedLogsService } from '../services/feedLogs';
+import { feedConsumptionMonthlyService } from '../services/feedConsumptionMonthly';
 import { useAuth } from '../contexts/AuthContext';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -68,7 +69,9 @@ export default function Estadisticas() {
   const [summaryProduction, setSummaryProduction] = React.useState<ProductionRecord[]>([]);
   const [summarySales, setSummarySales] = React.useState<Sale[]>([]);
   const [summaryExpenses, setSummaryExpenses] = React.useState<Expense[]>([]);
-  const [summaryFeedLogs, setSummaryFeedLogs] = React.useState<FeedLog[]>([]);
+  const [summaryConsumptions, setSummaryConsumptions] = React.useState<FeedConsumptionMonthly[]>([]);
+  const [feedConsumption, setFeedConsumption] = React.useState<FeedConsumptionMonthly | null>(null);
+  const [feedConsumptionLoading, setFeedConsumptionLoading] = React.useState(false);
   const [summaryLoading, setSummaryLoading] = React.useState(true);
   const [loading, setLoading] = React.useState(true);
   const [exporting, setExporting] = React.useState(false);
@@ -133,6 +136,34 @@ export default function Estadisticas() {
   }, [organizationId, selectedYear]);
 
   React.useEffect(() => {
+    if (!organizationId || !selectedMonth) {
+      setFeedConsumption(null);
+      return;
+    }
+    let cancelled = false;
+    setFeedConsumptionLoading(true);
+    feedConsumptionMonthlyService
+      .getByPeriod(
+        organizationId,
+        Number(selectedYear),
+        Number(selectedMonth),
+        selectedGallinero || null
+      )
+      .then((data) => {
+        if (!cancelled) setFeedConsumption(data);
+      })
+      .catch(() => {
+        if (!cancelled) setFeedConsumption(null);
+      })
+      .finally(() => {
+        if (!cancelled) setFeedConsumptionLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [organizationId, selectedYear, selectedMonth, selectedGallinero]);
+
+  React.useEffect(() => {
     if (!organizationId) return;
     let cancelled = false;
     (async () => {
@@ -141,17 +172,17 @@ export default function Estadisticas() {
       try {
         setSummaryLoading(true);
         const { fromYmd, toYmd } = boundsForCalendarYear(sy);
-        const [prod, saleRows, expRows, feedLogsData] = await Promise.all([
+        const [prod, saleRows, expRows, consumptionRows] = await Promise.all([
           productionService.getAllRange(organizationId, fromYmd, toYmd),
           salesService.getAllRange(organizationId, fromYmd, toYmd),
           expensesService.getAllRange(organizationId, fromYmd, toYmd),
-          feedLogsService.getAllRange(organizationId, fromYmd, toYmd),
+          feedConsumptionMonthlyService.getAllByYear(organizationId, sy),
         ]);
         if (!cancelled) {
           setSummaryProduction(prod);
           setSummarySales(saleRows);
           setSummaryExpenses(expRows);
-          setSummaryFeedLogs(feedLogsData);
+          setSummaryConsumptions(consumptionRows);
         }
       } catch (error) {
         console.error('Error loading monthly summary:', error);
@@ -159,7 +190,7 @@ export default function Estadisticas() {
           setSummaryProduction([]);
           setSummarySales([]);
           setSummaryExpenses([]);
-          setSummaryFeedLogs([]);
+          setSummaryConsumptions([]);
         }
       } finally {
         if (!cancelled) setSummaryLoading(false);
@@ -209,9 +240,6 @@ export default function Estadisticas() {
   const filteredSales = sales.filter((s) => dateMatchesFilter(s.date));
   const filteredExpenses = expenses.filter((e) => dateMatchesFilter(e.date));
   const filteredEvents = events.filter((e) => dateMatchesFilter(e.date));
-  const filteredFeedLogs = feedLogs.filter(
-    (f) => dateMatchesFilter(f.date) && matchesGallineroFilter(f.gallinero_id)
-  );
 
   const sumGallineroHens = (list: Gallinero[]) =>
     list.reduce(
@@ -354,13 +382,17 @@ export default function Estadisticas() {
     periodBounds.fromYmd,
     periodBounds.toYmd
   );
-  const totalFeedKg = filteredFeedLogs.reduce((sum, f) => sum + (f.kg_opened || 0), 0);
-  const totalHensForFeed = totalFarmHens;
-  const hasFeedConsumptionData =
-    totalFeedKg > 0 && periodBounds.dayCount > 0 && totalHensForFeed > 0;
-  const gramsPerHenPerDay = hasFeedConsumptionData
-    ? (totalFeedKg * 1000) / (periodBounds.dayCount * totalHensForFeed)
-    : null;
+
+  const declaredKg = feedConsumption?.kg_consumed ?? null;
+  const declaredHens = feedConsumption?.hens_snapshot ?? null;
+  const daysForCalc = selectedMonth
+    ? new Date(Number(activeYear), Number(selectedMonth), 0).getDate()
+    : periodBounds.dayCount;
+  const hensForCalc = declaredHens ?? totalFarmHens;
+  const gramsPerHenPerDay =
+    declaredKg != null && declaredKg > 0 && daysForCalc > 0 && hensForCalc > 0
+      ? (declaredKg * 1000) / (daysForCalc * hensForCalc)
+      : null;
 
   const summaryCalendarYear = Number(summaryYear) || new Date().getFullYear();
   const padMonth = (n: number) => String(n).padStart(2, '0');
@@ -383,11 +415,15 @@ export default function Estadisticas() {
     const netoMes = saleM.reduce((sum, s) => sum + (Number(s.total_price) || 0), 0);
     const gastosMes = expM.reduce((sum, e) => sum + (Number(e.total_price) || 0), 0);
     const gananciaMes = netoMes - gastosMes;
-    const kgAlimento = summaryFeedLogs
-      .filter((f) => f.date.startsWith(prefix))
-      .reduce((sum, f) => sum + Math.max(0, Number(f.kg_opened) || 0), 0);
+    const monthConsumption = summaryConsumptions.find((c) => c.month === m);
+    const kgAlimento = monthConsumption
+      ? Math.max(0, Number(monthConsumption.kg_consumed) || 0)
+      : 0;
 
-    const avgAvesMes = sumGallineroHens(gallineros);
+    const avgAvesMes =
+      monthConsumption?.hens_snapshot != null && monthConsumption.hens_snapshot > 0
+        ? monthConsumption.hens_snapshot
+        : sumGallineroHens(gallineros);
 
     const gramsPerHenDay =
       kgAlimento > 0 && daysInMonth > 0 && avgAvesMes > 0
@@ -659,13 +695,17 @@ export default function Estadisticas() {
               {gramsPerHenPerDay != null ? `${gramsPerHenPerDay.toFixed(1)} g/ave/día` : 'Sin datos'}
             </p>
             <p className="text-xs text-gray-500 mt-1">
-              {gramsPerHenPerDay != null ? (
+              {feedConsumptionLoading ? (
+                <>Cargando consumo declarado…</>
+              ) : gramsPerHenPerDay != null ? (
                 <>
-                  {totalFeedKg.toFixed(2)} kg · {periodBounds.dayCount} día(s) · {totalHensForFeed} aves (
-                  {selectedGallinero ? 'gallinero seleccionado' : 'toda la granja'})
+                  {declaredKg!.toFixed(2)} kg declarados · {daysForCalc} días · {hensForCalc} aves
+                  {declaredHens ? ' (histórico)' : ' (actual)'}
                 </>
+              ) : selectedMonth ? (
+                <>No hay consumo declarado para este mes.</>
               ) : (
-                <>Sin registros de consumo de alimento en el período filtrado.</>
+                <>Seleccioná un mes para ver el consumo por ave/día.</>
               )}
             </p>
           </div>

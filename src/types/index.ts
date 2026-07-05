@@ -148,6 +148,8 @@ export interface FeedConsumptionMonthly {
   month: number;
   kg_consumed: number;
   notes: string | null;
+  /** Aves al momento de declarar el consumo */
+  hens_snapshot?: number | null;
   created_at: string;
   updated_at: string;
 }

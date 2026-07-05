@@ -2,7 +2,7 @@ import { supabase } from './supabase';
 import { FeedConsumptionMonthly } from '../types';
 
 const SELECT_COLUMNS =
-  'id, organization_id, gallinero_id, year, month, kg_consumed, notes, created_at, updated_at';
+  'id, organization_id, gallinero_id, year, month, kg_consumed, notes, hens_snapshot, created_at, updated_at';
 
 type FeedConsumptionMonthlyRow = {
   id: string;
@@ -12,6 +12,7 @@ type FeedConsumptionMonthlyRow = {
   month: number;
   kg_consumed: number;
   notes: string | null;
+  hens_snapshot?: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -25,6 +26,10 @@ function toFeedConsumptionMonthly(row: FeedConsumptionMonthlyRow): FeedConsumpti
     month: Number(row.month),
     kg_consumed: Number(row.kg_consumed ?? 0),
     notes: row.notes ?? null,
+    hens_snapshot:
+      row.hens_snapshot != null && Number.isFinite(Number(row.hens_snapshot))
+        ? Number(row.hens_snapshot)
+        : null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -33,6 +38,12 @@ function toFeedConsumptionMonthly(row: FeedConsumptionMonthlyRow): FeedConsumpti
 function normalizeGallineroId(gallineroId?: string | null): string | null {
   const id = String(gallineroId ?? '').trim();
   return id.length > 0 ? id : null;
+}
+
+function normalizeHensSnapshot(hensSnapshot?: number | null): number | null {
+  if (hensSnapshot == null || !Number.isFinite(Number(hensSnapshot))) return null;
+  const n = Math.floor(Number(hensSnapshot));
+  return n > 0 ? n : null;
 }
 
 export const feedConsumptionMonthlyService = {
@@ -62,31 +73,88 @@ export const feedConsumptionMonthlyService = {
     return toFeedConsumptionMonthly(data as FeedConsumptionMonthlyRow);
   },
 
+  async getAllByYear(
+    organizationId: string,
+    year: number,
+    gallineroId?: string | null
+  ): Promise<FeedConsumptionMonthly[]> {
+    const gId = normalizeGallineroId(gallineroId);
+    let query = supabase
+      .from('feed_consumption_monthly')
+      .select(SELECT_COLUMNS)
+      .eq('organization_id', organizationId)
+      .eq('year', year)
+      .order('month');
+
+    if (gId === null) {
+      query = query.is('gallinero_id', null);
+    } else {
+      query = query.eq('gallinero_id', gId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data || []).map((row) => toFeedConsumptionMonthly(row as FeedConsumptionMonthlyRow));
+  },
+
   async upsert(
     organizationId: string,
     year: number,
     month: number,
     kgConsumed: number,
     notes?: string | null,
-    gallineroId?: string | null
+    gallineroId?: string | null,
+    hensSnapshot?: number | null
   ): Promise<FeedConsumptionMonthly> {
     const gId = normalizeGallineroId(gallineroId);
-    const payload = {
-      organization_id: organizationId,
-      gallinero_id: gId,
-      year,
-      month,
-      kg_consumed: kgConsumed,
-      notes: notes?.trim() ? notes.trim() : null,
-      updated_at: new Date().toISOString(),
-    };
+    const notesValue = notes ?? null;
+    const hensValue = normalizeHensSnapshot(hensSnapshot);
+
+    let existingQuery = supabase
+      .from('feed_consumption_monthly')
+      .select('id')
+      .eq('organization_id', organizationId)
+      .eq('year', year)
+      .eq('month', month);
+
+    if (gId === null) {
+      existingQuery = existingQuery.is('gallinero_id', null);
+    } else {
+      existingQuery = existingQuery.eq('gallinero_id', gId);
+    }
+
+    const { data: existing, error: existingError } = await existingQuery.maybeSingle();
+    if (existingError) throw existingError;
+
+    if (existing) {
+      const { data, error } = await supabase
+        .from('feed_consumption_monthly')
+        .update({
+          kg_consumed: kgConsumed,
+          notes: notesValue,
+          hens_snapshot: hensValue,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id)
+        .select(SELECT_COLUMNS)
+        .single();
+      if (error) throw error;
+      return toFeedConsumptionMonthly(data as FeedConsumptionMonthlyRow);
+    }
 
     const { data, error } = await supabase
       .from('feed_consumption_monthly')
-      .upsert(payload, { onConflict: 'organization_id,gallinero_id,year,month' })
+      .insert({
+        organization_id: organizationId,
+        gallinero_id: gId,
+        year,
+        month,
+        kg_consumed: kgConsumed,
+        notes: notesValue,
+        hens_snapshot: hensValue,
+      })
       .select(SELECT_COLUMNS)
       .single();
-
     if (error) throw error;
     return toFeedConsumptionMonthly(data as FeedConsumptionMonthlyRow);
   },
