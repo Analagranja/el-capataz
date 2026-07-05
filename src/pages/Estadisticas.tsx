@@ -41,6 +41,10 @@ const EGGS_PER_SALE_TYPE: Record<Sale['type'], number> = {
   maple: 30,
   docena: 12,
   media_docena: 6,
+  pack15: 15,
+  maple_grande: 30,
+  maple_mediano: 30,
+  maple_chico: 30,
 };
 
 const MONTH_NAMES = [

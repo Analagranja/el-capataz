@@ -18,6 +18,10 @@ const SALE_TYPE_OPTIONS: Array<{ value: Sale['type']; label: string }> = [
   { value: 'maple', label: 'Maple (30 huevos)' },
   { value: 'docena', label: 'Docena (12 huevos)' },
   { value: 'media_docena', label: 'Media Docena (6 huevos)' },
+  { value: 'pack15', label: 'Pack x15 huevos' },
+  { value: 'maple_grande', label: 'Maple Grande x30' },
+  { value: 'maple_mediano', label: 'Maple Mediano x30' },
+  { value: 'maple_chico', label: 'Maple Chico x30' },
 ];
 
 const MONTH_NAMES = [
@@ -56,7 +60,7 @@ export default function Ventas() {
   const [formData, setFormData] = React.useState({
     date: todayLocalYmdParts().ymd,
     customer_id: '',
-    type: 'docena' as 'maple' | 'docena' | 'media_docena',
+    type: 'docena' as Sale['type'],
     quantity: 0,
     price_per_unit: 0,
     notes: '',
@@ -207,15 +211,23 @@ export default function Ventas() {
     }
   };
 
-  const typeLabels = {
+  const typeLabels: Record<Sale['type'], string> = {
     maple: 'Maple (30)',
     docena: 'Docena (12)',
     media_docena: 'Media Docena (6)',
+    pack15: 'Pack x15',
+    maple_grande: 'Maple Grande (30)',
+    maple_mediano: 'Maple Mediano (30)',
+    maple_chico: 'Maple Chico (30)',
   };
   const eggsPerSaleType: Record<Sale['type'], number> = {
     maple: 30,
     docena: 12,
     media_docena: 6,
+    pack15: 15,
+    maple_grande: 30,
+    maple_mediano: 30,
+    maple_chico: 30,
   };
 
   const totalSales = sales.reduce((sum, s) => sum + s.total_price, 0);
@@ -424,7 +436,7 @@ export default function Ventas() {
             options={SALE_TYPE_OPTIONS}
             value={formData.type}
             onChange={(e) =>
-              setFormData({ ...formData, type: e.target.value as 'maple' | 'docena' | 'media_docena' })
+              setFormData({ ...formData, type: e.target.value as Sale['type'] })
             }
           />
 

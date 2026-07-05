@@ -14,13 +14,21 @@ const SALE_TYPE_LABEL: Record<Sale['type'], string> = {
   maple: 'Maple',
   docena: 'Docena',
   media_docena: 'Media docena',
+  pack15: 'Pack x15',
+  maple_grande: 'Maple Grande',
+  maple_mediano: 'Maple Mediano',
+  maple_chico: 'Maple Chico',
 };
 
-/** Equivalente en huevos por unidad vendida (maple/docena/media docena). */
+/** Equivalente en huevos por unidad vendida. */
 const EGGS_PER_SALE_TYPE: Record<Sale['type'], number> = {
   maple: 30,
   docena: 12,
   media_docena: 6,
+  pack15: 15,
+  maple_grande: 30,
+  maple_mediano: 30,
+  maple_chico: 30,
 };
 
 const MONTH_NAMES_ES = [

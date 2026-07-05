@@ -59,6 +59,7 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
   const [feedGallineroTarget, setFeedGallineroTarget] = React.useState<string>('all');
   const [feedLogSaving, setFeedLogSaving] = React.useState(false);
   const [feedLogError, setFeedLogError] = React.useState('');
+  const [clasificarPorTamano, setClasificarPorTamano] = React.useState(false);
   const [formData, setFormData] = React.useState({
     gallinero_id: selectedGallineroId || '',
     date: todayLocalYmd(),
@@ -67,6 +68,9 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
     notes: '',
     /** Población histórica guardada en el registro (solo edición) */
     poultry_count: 0,
+    eggs_large: 0,
+    eggs_medium: 0,
+    eggs_small: 0,
   });
 
   const loadGallineros = async () => {
@@ -128,6 +132,9 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
     if (!canLogProduction()) return;
     setError('');
     if (record) {
+      const hasSize =
+        record.eggs_large != null || record.eggs_medium != null || record.eggs_small != null;
+      setClasificarPorTamano(hasSize);
       setEditingId(record.id);
       setFormData({
         gallinero_id: record.gallinero_id,
@@ -136,8 +143,12 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
         broken_dirty_eggs_count: record.broken_dirty_eggs_count || 0,
         notes: record.notes || '',
         poultry_count: record.poultry_count ?? 0,
+        eggs_large: record.eggs_large ?? 0,
+        eggs_medium: record.eggs_medium ?? 0,
+        eggs_small: record.eggs_small ?? 0,
       });
     } else {
+      setClasificarPorTamano(false);
       setEditingId(null);
       setFormData({
         gallinero_id: currentGallineroId || gallineros[0]?.id || '',
@@ -146,6 +157,9 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
         broken_dirty_eggs_count: 0,
         notes: '',
         poultry_count: 0,
+        eggs_large: 0,
+        eggs_medium: 0,
+        eggs_small: 0,
       });
     }
     setIsModalOpen(true);
@@ -154,6 +168,7 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setEditingId(null);
+    setClasificarPorTamano(false);
     setError('');
     setDuplicateInfo(null);
   };
@@ -343,6 +358,10 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
         return;
       }
 
+      const eggsLarge = clasificarPorTamano ? formData.eggs_large || 0 : null;
+      const eggsMedium = clasificarPorTamano ? formData.eggs_medium || 0 : null;
+      const eggsSmall = clasificarPorTamano ? formData.eggs_small || 0 : null;
+
       if (editingId) {
         await productionService.update(
           organizationId,
@@ -351,7 +370,10 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
           formData.eggs_count,
           formData.broken_dirty_eggs_count,
           formData.poultry_count,
-          formData.notes
+          formData.notes,
+          eggsLarge,
+          eggsMedium,
+          eggsSmall
         );
       } else {
         await productionService.create(
@@ -361,7 +383,10 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
           formData.eggs_count,
           formData.broken_dirty_eggs_count,
           gallinero.current_count,
-          formData.notes
+          formData.notes,
+          eggsLarge,
+          eggsMedium,
+          eggsSmall
         );
       }
       setCurrentGallineroId(formData.gallinero_id);
@@ -637,7 +662,79 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
             value={formData.eggs_count}
             onChange={(e) => setFormData({ ...formData, eggs_count: parseInt(e.target.value) || 0 })}
             required
+            disabled={clasificarPorTamano}
           />
+
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="clasificar"
+              checked={clasificarPorTamano}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setClasificarPorTamano(checked);
+                if (!checked) {
+                  setFormData((prev) => ({
+                    ...prev,
+                    eggs_large: 0,
+                    eggs_medium: 0,
+                    eggs_small: 0,
+                  }));
+                }
+              }}
+            />
+            <label htmlFor="clasificar" className="text-sm text-gray-700">
+              Clasificar por tamaño
+            </label>
+          </div>
+
+          {clasificarPorTamano && (
+            <div className="grid grid-cols-3 gap-3 p-3 bg-gray-50 rounded-lg">
+              <Input
+                label="Grandes"
+                type="number"
+                value={formData.eggs_large || 0}
+                onChange={(e) => {
+                  const large = parseInt(e.target.value) || 0;
+                  setFormData((prev) => ({
+                    ...prev,
+                    eggs_large: large,
+                    eggs_count: large + (prev.eggs_medium || 0) + (prev.eggs_small || 0),
+                  }));
+                }}
+              />
+              <Input
+                label="Medianos"
+                type="number"
+                value={formData.eggs_medium || 0}
+                onChange={(e) => {
+                  const medium = parseInt(e.target.value) || 0;
+                  setFormData((prev) => ({
+                    ...prev,
+                    eggs_medium: medium,
+                    eggs_count: (prev.eggs_large || 0) + medium + (prev.eggs_small || 0),
+                  }));
+                }}
+              />
+              <Input
+                label="Chicos"
+                type="number"
+                value={formData.eggs_small || 0}
+                onChange={(e) => {
+                  const small = parseInt(e.target.value) || 0;
+                  setFormData((prev) => ({
+                    ...prev,
+                    eggs_small: small,
+                    eggs_count: (prev.eggs_large || 0) + (prev.eggs_medium || 0) + small,
+                  }));
+                }}
+              />
+              <p className="col-span-3 text-xs text-gray-500">
+                Total: {(formData.eggs_large || 0) + (formData.eggs_medium || 0) + (formData.eggs_small || 0)}{' '}
+                huevos
+              </p>
+            </div>
+          )}
 
           {isPostureOver100 && (
             <div className="p-3 bg-amber-50 border border-amber-300 rounded-lg">

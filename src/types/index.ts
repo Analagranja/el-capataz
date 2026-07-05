@@ -54,8 +54,20 @@ export interface ProductionRecord {
   poultry_count: number;
   laying_percentage: number;
   notes?: string;
+  eggs_large?: number | null;
+  eggs_medium?: number | null;
+  eggs_small?: number | null;
   created_at: string;
 }
+
+export type SaleType =
+  | 'maple'
+  | 'docena'
+  | 'media_docena'
+  | 'pack15'
+  | 'maple_grande'
+  | 'maple_mediano'
+  | 'maple_chico';
 
 export interface Sale {
   id: string;
@@ -63,7 +75,7 @@ export interface Sale {
   customer_id?: string | null;
   customer_name?: string;
   date: string;
-  type: 'maple' | 'docena' | 'media_docena';
+  type: SaleType;
   quantity: number;
   price_per_unit: number;
   total_price: number;

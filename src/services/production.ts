@@ -127,7 +127,10 @@ export const productionService = {
     eggsCount: number,
     brokenDirtyEggsCount: number,
     poultryCount: number,
-    notes?: string
+    notes?: string,
+    eggsLarge?: number | null,
+    eggsMedium?: number | null,
+    eggsSmall?: number | null
   ): Promise<ProductionRecord> {
     const layingPercentage = computeLayingPercentage(eggsCount, poultryCount);
     const dateDb = productionFormDateToDbDate(date);
@@ -143,6 +146,9 @@ export const productionService = {
         poultry_count: Math.max(0, Math.floor(poultryCount)),
         laying_percentage: layingPercentage,
         notes,
+        eggs_large: eggsLarge ?? null,
+        eggs_medium: eggsMedium ?? null,
+        eggs_small: eggsSmall ?? null,
       })
       .select()
       .single();
@@ -161,7 +167,10 @@ export const productionService = {
     eggsCount: number,
     brokenDirtyEggsCount: number,
     poultryCount: number,
-    notes?: string
+    notes?: string,
+    eggsLarge?: number | null,
+    eggsMedium?: number | null,
+    eggsSmall?: number | null
   ): Promise<ProductionRecord> {
     const layingPercentage = computeLayingPercentage(eggsCount, poultryCount);
     const dateDb = productionFormDateToDbDate(date);
@@ -172,6 +181,9 @@ export const productionService = {
       broken_dirty_eggs_count: brokenDirtyEggsCount,
       laying_percentage: layingPercentage,
       notes: notes ?? null,
+      eggs_large: eggsLarge ?? null,
+      eggs_medium: eggsMedium ?? null,
+      eggs_small: eggsSmall ?? null,
     };
     console.log('Datos enviados a Supabase:', data);
     console.log('production_records.update eq id:', id);

@@ -1,8 +1,6 @@
 import { supabase } from './supabase';
-import { Sale } from '../types';
+import { Sale, SaleType } from '../types';
 import { addOneLocalCalendarDayYmd } from '../utils/statsPeriod';
-
-type SaleType = 'maple' | 'docena' | 'media_docena';
 
 type SalesRow = {
   id: string;
