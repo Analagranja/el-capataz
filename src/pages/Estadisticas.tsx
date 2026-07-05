@@ -2,8 +2,6 @@ import React from 'react';
 import {
   LineChart,
   Line,
-  BarChart,
-  Bar,
   PieChart,
   Pie,
   Cell,
@@ -243,7 +241,6 @@ export default function Estadisticas() {
   );
   const filteredSales = sales.filter((s) => dateMatchesFilter(s.date));
   const filteredExpenses = expenses.filter((e) => dateMatchesFilter(e.date));
-  const filteredEvents = events.filter((e) => dateMatchesFilter(e.date));
 
   const sumGallineroHens = (list: Gallinero[]) =>
     list.reduce(
@@ -325,44 +322,6 @@ export default function Estadisticas() {
     },
   ];
 
-  const salesByDate = filteredSales
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .reduce((acc: Array<{ date: string; total: number; huevosEquiv: number }>, sale) => {
-      const eggs = EGGS_PER_SALE_TYPE[sale.type] || 0;
-      const huevosDia = sale.quantity * eggs;
-      const existing = acc.find((item) => item.date === sale.date);
-      if (existing) {
-        existing.total += sale.total_price;
-        existing.huevosEquiv += huevosDia;
-      } else {
-        acc.push({
-          date: sale.date,
-          total: sale.total_price,
-          huevosEquiv: huevosDia,
-        });
-      }
-      return acc;
-    }, []);
-
-  const eventsByType = [
-    {
-      name: 'Muertes',
-      value: filteredEvents
-        .filter((e) => e.event_type === 'muerte')
-        .reduce((sum, e) => sum + e.affected_count, 0),
-    },
-    {
-      name: 'Vacunación',
-      value: filteredEvents.filter((e) => e.event_type === 'vacunacion').length,
-    },
-    {
-      name: 'Otros eventos',
-      value: filteredEvents.filter((e) =>
-        ['otros', 'vitaminas', 'medicacion', 'ingreso_pollitas'].includes(e.event_type)
-      ).length,
-    },
-  ];
-
   const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
   const totalEggsProduced = filteredProduction.reduce((sum, p) => sum + p.eggs_count, 0);
@@ -380,12 +339,27 @@ export default function Estadisticas() {
   const totalSalesAmount = filteredSales.reduce((sum, s) => sum + s.total_price, 0);
   const avgPricePerEgg = totalEggsSold > 0 ? totalSalesAmount / totalEggsSold : 0;
   const periodBounds = boundsForYearMonthFilter(activeYear, selectedMonth);
+  const periodLabel = selectedMonth
+    ? `${MONTH_NAMES[Number(selectedMonth) - 1]} ${activeYear}`
+    : `Año ${activeYear}`;
   const periodFinance = computeMonthToDateTotals(
     filteredSales,
     filteredExpenses,
     periodBounds.fromYmd,
     periodBounds.toYmd
   );
+
+  const totalVentasPeriodo = filteredSales.reduce((sum, s) => sum + s.total_price, 0);
+  const gastosAlimentoPeriodo = filteredExpenses
+    .filter((e) => e.description === 'Alimento')
+    .reduce((sum, e) => sum + e.total_price, 0);
+  const gastosOtrosPeriodo = filteredExpenses
+    .filter((e) => e.description !== 'Alimento')
+    .reduce((sum, e) => sum + e.total_price, 0);
+  const totalEgresosPeriodo = gastosAlimentoPeriodo + gastosOtrosPeriodo;
+  const resultadoPeriodo = totalVentasPeriodo - totalEgresosPeriodo;
+  const margenPorHuevo = totalEggsSold > 0 ? resultadoPeriodo / totalEggsSold : null;
+  const costoPorHuevo = totalEggsProduced > 0 ? totalEgresosPeriodo / totalEggsProduced : null;
 
   const declaredKg = feedConsumption?.kg_consumed ?? null;
   const declaredHens = feedConsumption?.hens_snapshot ?? null;
@@ -575,75 +549,99 @@ export default function Estadisticas() {
         </Card>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {salesByType.some((item) => item.value > 0) && (
-          <Card padding="md">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Ventas por Tipo</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={salesByType}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={({ name, value }) => `${name}: ${value}`}
-                  outerRadius={80}
-                  fill="#8884d8"
-                  dataKey="value"
-                >
-                  {salesByType.map((_, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          </Card>
-        )}
-
-        {eventsByType.some((item) => item.value > 0) && (
-          <Card padding="md">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Eventos Registrados</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={eventsByType}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="value" fill="#3b82f6" />
-              </BarChart>
-            </ResponsiveContainer>
-          </Card>
-        )}
-      </div>
-
-      {salesByDate.length > 0 && (
+      {salesByType.some((item) => item.value > 0) && (
         <Card padding="md">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Ventas diarias</h3>
-          <p className="text-sm text-gray-600 mb-3">
-            Barras verdes: ingresos en pesos por día. Barras azules: huevos vendidos (equivalente: Maple 30, Docena
-            12, Media 6 por unidad).
-          </p>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Ventas por Tipo</h3>
           <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={salesByDate}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" />
-              <YAxis yAxisId="left" tickFormatter={(v) => `$${v}`} />
-              <YAxis yAxisId="right" orientation="right" label={{ value: 'Huevos', angle: -90, position: 'insideRight' }} />
-              <Tooltip
-                formatter={(value: number, name: string) =>
-                  String(name).includes('Ingresos')
-                    ? [formatArs(value), name]
-                    : [`${Math.round(value)} huevos`, name]
-                }
-              />
-              <Legend />
-              <Bar yAxisId="left" dataKey="total" fill="#10b981" name="Ingresos ($)" />
-              <Bar yAxisId="right" dataKey="huevosEquiv" fill="#3b82f6" name="Huevos vendidos (equiv.)" />
-            </BarChart>
+            <PieChart>
+              <Pie
+                data={salesByType}
+                cx="50%"
+                cy="50%"
+                labelLine={false}
+                label={({ name, value }) => `${name}: ${value}`}
+                outerRadius={80}
+                fill="#8884d8"
+                dataKey="value"
+              >
+                {salesByType.map((_, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip />
+            </PieChart>
           </ResponsiveContainer>
         </Card>
       )}
+
+      <Card padding="md">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">
+          Resumen Financiero — {periodLabel}
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-3">
+            <div className="flex justify-between items-center py-2 border-b border-gray-100">
+              <span className="text-sm font-medium text-gray-700">Ingresos (ventas)</span>
+              <span className="font-semibold text-green-700">{formatArs(totalVentasPeriodo)}</span>
+            </div>
+            <div className="flex justify-between items-center py-1 pl-4">
+              <span className="text-sm text-gray-600">Alimento</span>
+              <span className="text-sm tabular-nums text-gray-800">
+                {formatArs(gastosAlimentoPeriodo)}
+              </span>
+            </div>
+            <div className="flex justify-between items-center py-1 pl-4">
+              <span className="text-sm text-gray-600">Otros gastos</span>
+              <span className="text-sm tabular-nums text-gray-800">{formatArs(gastosOtrosPeriodo)}</span>
+            </div>
+            <div className="flex justify-between items-center py-2 border-t border-gray-200">
+              <span className="text-sm font-medium text-gray-700">Total egresos</span>
+              <span className="font-semibold text-red-700">{formatArs(totalEgresosPeriodo)}</span>
+            </div>
+            <div className="flex justify-between items-center py-3 border-t-2 border-gray-300 bg-gray-50 rounded-lg px-3">
+              <span className="font-semibold text-gray-900">Resultado</span>
+              <span
+                className={`text-xl font-bold ${
+                  resultadoPeriodo >= 0 ? 'text-green-700' : 'text-red-700'
+                }`}
+              >
+                {formatArs(resultadoPeriodo)}
+              </span>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="rounded-lg border border-gray-200 p-4 space-y-3">
+              <p className="text-sm font-semibold text-gray-700 mb-2">Por huevo</p>
+              <div className="flex justify-between">
+                <span className="text-sm text-gray-600">Precio promedio de venta</span>
+                <span className="font-medium tabular-nums">{formatArs(avgPricePerEgg)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-sm text-gray-600">Costo de producción</span>
+                <span className="font-medium tabular-nums text-red-600">
+                  {costoPorHuevo != null ? formatArs(costoPorHuevo) : '—'}
+                </span>
+              </div>
+              <div className="flex justify-between border-t border-gray-100 pt-2">
+                <span className="text-sm font-semibold text-gray-700">Margen por huevo</span>
+                <span
+                  className={`font-bold tabular-nums ${
+                    margenPorHuevo != null && margenPorHuevo >= 0 ? 'text-green-700' : 'text-red-700'
+                  }`}
+                >
+                  {margenPorHuevo != null ? formatArs(margenPorHuevo) : '—'}
+                </span>
+              </div>
+            </div>
+            {totalEgresosPeriodo === 0 && (
+              <p className="text-xs text-gray-400">
+                Cargá gastos del período para ver el análisis por huevo.
+              </p>
+            )}
+          </div>
+        </div>
+      </Card>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
         <Card padding="md" hover>
