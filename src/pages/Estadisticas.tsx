@@ -174,17 +174,39 @@ export default function Estadisticas() {
       try {
         setSummaryLoading(true);
         const { fromYmd, toYmd } = boundsForCalendarYear(sy);
-        const [prod, saleRows, expRows, consumptionRows] = await Promise.all([
+
+        // Cargas independientes: un fallo (p. ej. expenses) no debe borrar kg declarados.
+        const [prodResult, saleResult, expResult, consumptionResult] = await Promise.allSettled([
           productionService.getAllRange(organizationId, fromYmd, toYmd),
           salesService.getAllRange(organizationId, fromYmd, toYmd),
           expensesService.getAllRange(organizationId, fromYmd, toYmd),
           feedConsumptionMonthlyService.getAllByYear(organizationId, sy),
         ]);
-        if (!cancelled) {
-          setSummaryProduction(prod);
-          setSummarySales(saleRows);
-          setSummaryExpenses(expRows);
-          setSummaryConsumptions(consumptionRows);
+
+        if (cancelled) return;
+
+        if (prodResult.status === 'fulfilled') setSummaryProduction(prodResult.value);
+        else {
+          console.error('Error loading summary production:', prodResult.reason);
+          setSummaryProduction([]);
+        }
+
+        if (saleResult.status === 'fulfilled') setSummarySales(saleResult.value);
+        else {
+          console.error('Error loading summary sales:', saleResult.reason);
+          setSummarySales([]);
+        }
+
+        if (expResult.status === 'fulfilled') setSummaryExpenses(expResult.value);
+        else {
+          console.error('Error loading summary expenses:', expResult.reason);
+          setSummaryExpenses([]);
+        }
+
+        if (consumptionResult.status === 'fulfilled') setSummaryConsumptions(consumptionResult.value);
+        else {
+          console.error('Error loading summary feed consumption:', consumptionResult.reason);
+          setSummaryConsumptions([]);
         }
       } catch (error) {
         console.error('Error loading monthly summary:', error);
@@ -393,15 +415,25 @@ export default function Estadisticas() {
     const netoMes = saleM.reduce((sum, s) => sum + (Number(s.total_price) || 0), 0);
     const gastosMes = expM.reduce((sum, e) => sum + (Number(e.total_price) || 0), 0);
     const gananciaMes = netoMes - gastosMes;
-    const monthConsumption = summaryConsumptions.find((c) => c.month === m);
-    const kgAlimento = monthConsumption
-      ? Math.max(0, Number(monthConsumption.kg_consumed) || 0)
-      : 0;
+    const monthConsumptions = summaryConsumptions.filter((c) => c.month === m);
+    // Preferir declaración a nivel org (gallinero_id null); si no hay, sumar por gallinero.
+    const orgLevel = monthConsumptions.filter((c) => c.gallinero_id == null);
+    const kgSource = orgLevel.length > 0 ? orgLevel : monthConsumptions;
+    const kgAlimento = kgSource.reduce(
+      (sum, c) => sum + Math.max(0, Number(c.kg_consumed) || 0),
+      0
+    );
 
+    const hensFromOrg = orgLevel.find((c) => c.hens_snapshot != null && c.hens_snapshot > 0);
+    const hensFromAny = monthConsumptions.find(
+      (c) => c.hens_snapshot != null && c.hens_snapshot > 0
+    );
     const avgAvesMes =
-      monthConsumption?.hens_snapshot != null && monthConsumption.hens_snapshot > 0
-        ? monthConsumption.hens_snapshot
-        : sumGallineroHens(gallineros);
+      hensFromOrg?.hens_snapshot != null && hensFromOrg.hens_snapshot > 0
+        ? hensFromOrg.hens_snapshot
+        : hensFromAny?.hens_snapshot != null && hensFromAny.hens_snapshot > 0
+          ? hensFromAny.hens_snapshot
+          : sumGallineroHens(gallineros);
 
     const gramsPerHenDay =
       kgAlimento > 0 && daysInMonth > 0 && avgAvesMes > 0
@@ -746,7 +778,7 @@ export default function Estadisticas() {
                     <th className="px-3 py-2 font-semibold text-gray-700">Neto ($ ventas)</th>
                     <th className="px-3 py-2 font-semibold text-gray-700">Total ($ ganancia)</th>
                     <th className="px-3 py-2 font-semibold text-gray-700">Total Gastos ($)</th>
-                    <th className="px-3 py-2 font-semibold text-gray-700">Kg Alimento</th>
+                    <th className="px-3 py-2 font-semibold text-gray-700">Kg consumidos</th>
                     <th className="px-3 py-2 font-semibold text-gray-700">g/ave/día</th>
                   </tr>
                 </thead>
@@ -812,7 +844,7 @@ export default function Estadisticas() {
                 <span className="tabular-nums">{formatArs(totalGastosAnual)}</span>
               </p>
               <p>
-                <span className="font-semibold">Kg Alimento {summaryCalendarYear}:</span>{' '}
+                <span className="font-semibold">Kg consumidos {summaryCalendarYear}:</span>{' '}
                 <span className="tabular-nums">
                   {totalKgAlimentoAnual > 0 ? totalKgAlimentoAnual.toFixed(2) : '—'}
                 </span>

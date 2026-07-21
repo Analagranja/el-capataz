@@ -78,7 +78,6 @@ export const feedConsumptionMonthlyService = {
     year: number,
     gallineroId?: string | null
   ): Promise<FeedConsumptionMonthly[]> {
-    const gId = normalizeGallineroId(gallineroId);
     let query = supabase
       .from('feed_consumption_monthly')
       .select(SELECT_COLUMNS)
@@ -86,10 +85,14 @@ export const feedConsumptionMonthlyService = {
       .eq('year', year)
       .order('month');
 
-    if (gId === null) {
-      query = query.is('gallinero_id', null);
-    } else {
-      query = query.eq('gallinero_id', gId);
+    // undefined = toda la org (Estadísticas). null = solo declaración "granja general".
+    if (gallineroId !== undefined) {
+      const gId = normalizeGallineroId(gallineroId);
+      if (gId === null) {
+        query = query.is('gallinero_id', null);
+      } else {
+        query = query.eq('gallinero_id', gId);
+      }
     }
 
     const { data, error } = await query;
