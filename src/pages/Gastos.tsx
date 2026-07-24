@@ -94,6 +94,13 @@ function getSavedBagWeight(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 25;
 }
 
+/** NULL/ausente: no hay bolsas registradas (kg directo o histórico sin dato). */
+function formatBagsCountDisplay(bags: number | null | undefined): string {
+  if (bags == null || !Number.isFinite(Number(bags))) return '—';
+  const n = Math.floor(Number(bags));
+  return n > 0 ? String(n) : '—';
+}
+
 const GASTOS_MONTH_OPTIONS = [
   { value: '', label: 'Todos los meses' },
   { value: '01', label: 'Enero' },
@@ -776,6 +783,11 @@ export default function Gastos({
                 key: 'quantity_kg',
                 label: 'Cantidad (kg)',
                 render: (value) => `${Number(value).toFixed(2)} kg`,
+              },
+              {
+                key: 'bags_count',
+                label: 'Bolsas',
+                render: (_value, row: Expense) => formatBagsCountDisplay(row.bags_count),
               },
               {
                 key: 'total_price',
