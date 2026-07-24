@@ -123,12 +123,22 @@ export interface Customer {
   created_at: string;
 }
 
+/** Item de packaging trackeado en control físico (unidades, no kg). */
+export type PackagingItemKey = 'maple' | 'docena' | 'media_docena';
+
 export interface Expense {
   id: string;
   organization_id: string;
   date: string;
   description: string;
   quantity_kg: number;
+  /** Bolsas compradas (Alimento por bolsas). Null si se cargó en kg. */
+  bags_count?: number | null;
+  /** Kg por bolsa al comprar (trazabilidad). */
+  bag_weight_kg?: number | null;
+  /** Unidades de packaging compradas (Maples / Packaging); independiente de quantity_kg. */
+  packaging_quantity?: number | null;
+  packaging_item_key?: PackagingItemKey | null;
   total_price: number;
   gallinero_id?: string | null;
   /** Nombre del gallinero (join virtual, no columna en `expenses`) */

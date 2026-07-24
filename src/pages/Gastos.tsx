@@ -1,8 +1,7 @@
 import React from 'react';
-import { Expense, FeedConsumptionMonthly, FeedLog, Gallinero } from '../types';
+import { Expense, FeedConsumptionMonthly, Gallinero, PackagingItemKey, Page } from '../types';
 import { expensesService } from '../services/expenses';
 import { feedConsumptionMonthlyService } from '../services/feedConsumptionMonthly';
-import { feedLogsService } from '../services/feedLogs';
 import { gallinerosService } from '../services/gallineros';
 import { useAuth } from '../contexts/AuthContext';
 import { useBumpDashboardMetrics } from '../contexts/DashboardMetricsRefreshContext';
@@ -16,6 +15,7 @@ import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { formatArs } from '../utils/formatCurrency';
 import { todayLocalYmd } from '../utils/monthToDateFinance';
 import { boundsForYearMonthFilter } from '../utils/statsPeriod';
+import { numberInputValue, parseFormFloat, parseFormInt } from '../utils/formNumbers';
 
 const LAST_BAG_WEIGHT_KEY = 'gastos_alimento_last_bag_weight_kg';
 
@@ -28,6 +28,23 @@ function formatLocalDate(dateText: string) {
 function isAlimento(category: string): boolean {
   return category === 'Alimento';
 }
+
+function isMaplesPackaging(category: string): boolean {
+  return category === 'Maples / Packaging';
+}
+
+const PACKAGING_ITEM_OPTIONS: Array<{ value: PackagingItemKey | ''; label: string }> = [
+  { value: '', label: 'Sin especificar' },
+  { value: 'maple', label: 'Maple (30 huevos)' },
+  { value: 'docena', label: 'Docena (12)' },
+  { value: 'media_docena', label: 'Media Docena (6)' },
+];
+
+const PACKAGING_ITEM_LABEL: Record<PackagingItemKey, string> = {
+  maple: 'Maple',
+  docena: 'Docena',
+  media_docena: 'Media Docena',
+};
 
 const EXPENSE_CATEGORIES = [
   'Alimento',
@@ -52,6 +69,8 @@ function getDefaultFormData(category = 'Alimento') {
     bag_price: 0,
     total_price: 0,
     gallinero_id: null as string | null,
+    packaging_quantity: '' as string,
+    packaging_item_key: '' as PackagingItemKey | '',
   };
 }
 
@@ -91,7 +110,25 @@ const GASTOS_MONTH_OPTIONS = [
   { value: '12', label: 'Diciembre' },
 ];
 
-export default function Gastos() {
+const CONSUMPTION_MONTH_OPTIONS = GASTOS_MONTH_OPTIONS.filter((o) => o.value !== '');
+
+export type GastosConsumptionFocus = {
+  year: number;
+  month: number;
+  openConsumptionModal?: boolean;
+};
+
+type GastosProps = {
+  onNavigate?: (page: Page) => void;
+  consumptionFocus?: GastosConsumptionFocus | null;
+  onConsumptionFocusConsumed?: () => void;
+};
+
+export default function Gastos({
+  onNavigate,
+  consumptionFocus,
+  onConsumptionFocusConsumed,
+}: GastosProps) {
   const { organizationId } = useAuth();
   const bumpDashboardMetrics = useBumpDashboardMetrics();
   const now = React.useMemo(() => new Date(), []);
@@ -104,7 +141,6 @@ export default function Gastos() {
     String(now.getMonth() + 1).padStart(2, '0')
   );
   const [loading, setLoading] = React.useState(true);
-  const [feedLogs, setFeedLogs] = React.useState<FeedLog[]>([]);
   const [consumption, setConsumption] = React.useState<FeedConsumptionMonthly | null>(null);
   const [consumptionLoading, setConsumptionLoading] = React.useState(false);
   const [consumptionModalOpen, setConsumptionModalOpen] = React.useState(false);
@@ -114,18 +150,7 @@ export default function Gastos() {
   });
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
-  const [formData, setFormData] = React.useState({
-    date: todayLocalYmd(),
-    category: 'Alimento' as string,
-    customDescription: '' as string,
-    unit: 'kg' as 'kg' | 'bolsas',
-    quantity_kg: 0,
-    bags_count: 0,
-    bag_weight_kg: getSavedBagWeight(),
-    bag_price: 0,
-    total_price: 0,
-    gallinero_id: null as string | null,
-  });
+  const [formData, setFormData] = React.useState(getDefaultFormData('Alimento'));
 
   const loadGallineros = async () => {
     if (!organizationId) {
@@ -154,6 +179,25 @@ export default function Gastos() {
   }, [organizationId]);
 
   React.useEffect(() => {
+    if (!consumptionFocus) return;
+    const y = Number(consumptionFocus.year);
+    const m = Number(consumptionFocus.month);
+    if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) {
+      onConsumptionFocusConsumed?.();
+      return;
+    }
+    setActiveTab('alimento');
+    setFilterGallinero('all');
+    setSelectedYear(String(y));
+    setSelectedMonth(String(m).padStart(2, '0'));
+    if (consumptionFocus.openConsumptionModal) {
+      setConsumptionForm({ kg_consumed: '', notes: '' });
+      setConsumptionModalOpen(true);
+    }
+    onConsumptionFocusConsumed?.();
+  }, [consumptionFocus, onConsumptionFocusConsumed]);
+
+  React.useEffect(() => {
     if (!organizationId) {
       setExpenses([]);
       setLoading(false);
@@ -164,19 +208,14 @@ export default function Gastos() {
       try {
         setLoading(true);
         const { fromYmd, toYmd } = boundsForYearMonthFilter(selectedYear, selectedMonth);
-        const [expensesData, feedLogsData] = await Promise.all([
-          expensesService.getAllRange(organizationId, fromYmd, toYmd),
-          feedLogsService.getAllRange(organizationId, fromYmd, toYmd),
-        ]);
+        const expensesData = await expensesService.getAllRange(organizationId, fromYmd, toYmd);
         if (!cancelled) {
           setExpenses(expensesData);
-          setFeedLogs(feedLogsData);
         }
       } catch (error) {
         console.error('Error loading expenses:', error);
         if (!cancelled) {
           setExpenses([]);
-          setFeedLogs([]);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -225,12 +264,8 @@ export default function Gastos() {
   const reloadExpenses = async () => {
     if (!organizationId) return;
     const { fromYmd, toYmd } = boundsForYearMonthFilter(selectedYear, selectedMonth);
-    const [expensesData, feedLogsData] = await Promise.all([
-      expensesService.getAllRange(organizationId, fromYmd, toYmd),
-      feedLogsService.getAllRange(organizationId, fromYmd, toYmd),
-    ]);
+    const expensesData = await expensesService.getAllRange(organizationId, fromYmd, toYmd);
     setExpenses(expensesData);
-    setFeedLogs(feedLogsData);
   };
 
   const reloadConsumption = async () => {
@@ -269,18 +304,33 @@ export default function Gastos() {
   const handleOpenEdit = (expense: Expense) => {
     const cat = EXPENSE_CATEGORIES.includes(expense.description) ? expense.description : 'Otro';
     const customDesc = cat === 'Otro' ? expense.description : '';
+    const hasBags =
+      expense.description === 'Alimento' &&
+      expense.bags_count != null &&
+      expense.bags_count > 0;
     setEditingId(expense.id);
     setFormData({
       date: expense.date.slice(0, 10),
       category: cat,
       customDescription: customDesc,
-      unit: 'kg',
+      unit: hasBags ? 'bolsas' : 'kg',
       quantity_kg: expense.quantity_kg,
-      bags_count: 0,
-      bag_weight_kg: getSavedBagWeight(),
-      bag_price: 0,
+      bags_count: hasBags ? expense.bags_count! : 0,
+      bag_weight_kg:
+        hasBags && expense.bag_weight_kg != null && expense.bag_weight_kg > 0
+          ? expense.bag_weight_kg
+          : getSavedBagWeight(),
+      bag_price:
+        hasBags && expense.bags_count! > 0
+          ? expense.total_price / expense.bags_count!
+          : 0,
       total_price: expense.total_price,
       gallinero_id: expense.gallinero_id ?? null,
+      packaging_quantity:
+        expense.packaging_quantity != null && expense.packaging_quantity > 0
+          ? String(expense.packaging_quantity)
+          : '',
+      packaging_item_key: expense.packaging_item_key ?? '',
     });
     setIsModalOpen(true);
   };
@@ -318,13 +368,29 @@ export default function Gastos() {
     setConsumptionModalOpen(true);
   };
 
+  // Si cambia mes/año con el modal abierto, alinear el formulario con la declaración de ese período.
+  React.useEffect(() => {
+    if (!consumptionModalOpen || consumptionLoading) return;
+    setConsumptionForm({
+      kg_consumed: consumption ? String(consumption.kg_consumed) : '',
+      notes: consumption?.notes ?? '',
+    });
+  }, [
+    consumptionModalOpen,
+    consumptionLoading,
+    consumption?.id,
+    consumption?.kg_consumed,
+    consumption?.notes,
+    selectedYear,
+    selectedMonth,
+  ]);
+
   const handleCloseConsumptionModal = () => {
     setConsumptionModalOpen(false);
     setConsumptionForm({ kg_consumed: '', notes: '' });
   };
 
-  const handleSaveConsumption = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const persistConsumption = async () => {
     if (!organizationId || !selectedMonth) return;
     const year = Number(selectedYear);
     const month = Number(selectedMonth);
@@ -346,6 +412,11 @@ export default function Gastos() {
     } catch (error) {
       console.error('Error saving feed consumption:', error);
     }
+  };
+
+  const handleSaveConsumption = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await persistConsumption();
   };
 
   const handleDeleteConsumption = async () => {
@@ -370,18 +441,60 @@ export default function Gastos() {
     let computedTotalPrice = formData.total_price;
 
     if (alimento) {
-      quantityKg =
-        formData.unit === 'bolsas'
-          ? (formData.bags_count || 0) * (formData.bag_weight_kg || 0)
-          : formData.quantity_kg;
-      if (quantityKg <= 0) return;
-      computedTotalPrice =
-        formData.unit === 'bolsas'
-          ? (formData.bags_count || 0) * (formData.bag_price || 0)
-          : formData.total_price;
+      if (formData.unit === 'bolsas') {
+        const bags = Math.floor(formData.bags_count || 0);
+        const bagKg = formData.bag_weight_kg || 0;
+        const bagPrice = formData.bag_price || 0;
+        if (bags <= 0 || bagKg <= 0 || bagPrice <= 0) {
+          window.alert(
+            'Para compra en bolsas, completá cantidad de bolsas, kg por bolsa y precio por bolsa (todos mayores a 0).'
+          );
+          return;
+        }
+        quantityKg = bags * bagKg;
+        computedTotalPrice = bags * bagPrice;
+      } else {
+        quantityKg = formData.quantity_kg;
+        computedTotalPrice = formData.total_price;
+        if (quantityKg <= 0 || computedTotalPrice <= 0) {
+          window.alert('Indicá kilos y costo total mayores a 0.');
+          return;
+        }
+      }
     } else if (computedTotalPrice <= 0) {
       return;
     }
+
+    const packagingQtyRaw = formData.packaging_quantity.trim();
+    const packagingQtyParsed = packagingQtyRaw === '' ? null : parseInt(packagingQtyRaw, 10);
+    if (isMaplesPackaging(formData.category) && packagingQtyParsed != null) {
+      if (!Number.isFinite(packagingQtyParsed) || packagingQtyParsed < 0) return;
+      if (packagingQtyParsed > 0 && !formData.packaging_item_key) {
+        window.alert('Si indicás cantidad de packaging, elegí también el tipo (Maple / Docena / Media Docena).');
+        return;
+      }
+    }
+    // Solo enviar packaging en Maples; en Alimento no tocar esas columnas.
+    const packaging = isMaplesPackaging(formData.category)
+      ? packagingQtyParsed != null &&
+        packagingQtyParsed > 0 &&
+        formData.packaging_item_key
+        ? {
+            packaging_quantity: packagingQtyParsed,
+            packaging_item_key: formData.packaging_item_key as PackagingItemKey,
+          }
+        : { packaging_quantity: null, packaging_item_key: null }
+      : undefined;
+
+    const bags =
+      alimento && formData.unit === 'bolsas'
+        ? {
+            bags_count: Math.floor(formData.bags_count || 0),
+            bag_weight_kg: formData.bag_weight_kg || null,
+          }
+        : alimento
+          ? null
+          : undefined;
 
     try {
       if (editingId) {
@@ -392,7 +505,9 @@ export default function Gastos() {
           description,
           quantityKg,
           computedTotalPrice,
-          formData.gallinero_id ?? null
+          formData.gallinero_id ?? null,
+          packaging,
+          bags
         );
       } else {
         await expensesService.create(
@@ -401,7 +516,9 @@ export default function Gastos() {
           description,
           quantityKg,
           computedTotalPrice,
-          formData.gallinero_id ?? null
+          formData.gallinero_id ?? null,
+          packaging,
+          bags
         );
       }
       if (alimento && formData.unit === 'bolsas' && formData.bag_weight_kg > 0 && typeof window !== 'undefined') {
@@ -427,20 +544,6 @@ export default function Gastos() {
       }
     }
   };
-
-  const filteredFeedLogs = React.useMemo(() => {
-    if (filterGallinero === 'all') return feedLogs;
-    if (filterGallinero === 'general') return [];
-    return feedLogs.filter((log) => log.gallinero_id === filterGallinero);
-  }, [feedLogs, filterGallinero]);
-
-  const totalBolsasCompradas = React.useMemo(() => {
-    const bolsasLogs = filteredFeedLogs.filter(
-      (log) => log.tipo === 'bolsas' && log.cantidad_bolsas != null
-    );
-    if (bolsasLogs.length === 0) return null;
-    return bolsasLogs.reduce((sum, log) => sum + (log.cantidad_bolsas ?? 0), 0);
-  }, [filteredFeedLogs]);
 
   const selectedMonthLabel = React.useMemo(
     () => GASTOS_MONTH_OPTIONS.find((o) => o.value === selectedMonth)?.label ?? selectedMonth,
@@ -489,6 +592,16 @@ export default function Gastos() {
   const totalAlimentoKg = alimentoExpenses.reduce((sum, e) => sum + e.quantity_kg, 0);
   const totalOtrosGastos = otrosExpenses.reduce((sum, e) => sum + e.total_price, 0);
 
+  const totalBolsasCompradas = React.useMemo(() => {
+    // Solo bolsas de gastos Alimento del filtro (misma fuente que kg y $).
+    // No usar feed_logs: eso es consumo de Producción, no compras.
+    const withBags = alimentoExpenses.filter(
+      (e) => e.bags_count != null && e.bags_count > 0 && e.quantity_kg > 0
+    );
+    if (withBags.length === 0) return null;
+    return withBags.reduce((sum, e) => sum + (e.bags_count ?? 0), 0);
+  }, [alimentoExpenses]);
+
   const renderExpenseActions = (row: Expense) => (
     <div className="flex flex-wrap items-center gap-2">
       <button
@@ -507,6 +620,7 @@ export default function Gastos() {
   );
 
   const isAlimentoForm = isAlimento(formData.category);
+  const isMaplesForm = isMaplesPackaging(formData.category);
   const kilosFromBags = (formData.bags_count || 0) * (formData.bag_weight_kg || 0);
   const totalFromBagsPrice = (formData.bags_count || 0) * (formData.bag_price || 0);
 
@@ -703,6 +817,23 @@ export default function Gastos() {
                 render: (_value, row: Expense) => expenseDetailLabel(row.description),
               },
               {
+                key: 'packaging_quantity',
+                label: 'Cantidad',
+                render: (_value, row: Expense) => {
+                  if (
+                    row.description !== 'Maples / Packaging' ||
+                    row.packaging_quantity == null ||
+                    row.packaging_quantity <= 0
+                  ) {
+                    return '—';
+                  }
+                  const itemLabel = row.packaging_item_key
+                    ? PACKAGING_ITEM_LABEL[row.packaging_item_key]
+                    : 'u.';
+                  return `${row.packaging_quantity} × ${itemLabel}`;
+                },
+              },
+              {
                 key: 'total_price',
                 label: 'Total',
                 render: (value) => formatArs(value as number),
@@ -738,7 +869,15 @@ export default function Gastos() {
             label="Categoría"
             options={EXPENSE_CATEGORIES.map((cat) => ({ value: cat, label: cat }))}
             value={formData.category}
-            onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+            onChange={(e) => {
+              const category = e.target.value;
+              setFormData({
+                ...formData,
+                category,
+                packaging_quantity: isMaplesPackaging(category) ? formData.packaging_quantity : '',
+                packaging_item_key: isMaplesPackaging(category) ? formData.packaging_item_key : '',
+              });
+            }}
             required
           />
 
@@ -783,8 +922,10 @@ export default function Gastos() {
                 type="number"
                 step="1"
                 min="0"
-                value={formData.bags_count}
-                onChange={(e) => setFormData({ ...formData, bags_count: parseFloat(e.target.value) || 0 })}
+                value={numberInputValue(formData.bags_count)}
+                onChange={(e) =>
+                  setFormData({ ...formData, bags_count: parseFormInt(e.target.value, 0) })
+                }
                 required
               />
               <Input
@@ -792,8 +933,10 @@ export default function Gastos() {
                 type="number"
                 step="0.01"
                 min="0"
-                value={formData.bag_price}
-                onChange={(e) => setFormData({ ...formData, bag_price: parseFloat(e.target.value) || 0 })}
+                value={numberInputValue(formData.bag_price)}
+                onChange={(e) =>
+                  setFormData({ ...formData, bag_price: parseFormFloat(e.target.value, 0) })
+                }
                 required
               />
               <Input
@@ -801,8 +944,10 @@ export default function Gastos() {
                 type="number"
                 step="0.01"
                 min="0"
-                value={formData.bag_weight_kg}
-                onChange={(e) => setFormData({ ...formData, bag_weight_kg: parseFloat(e.target.value) || 0 })}
+                value={numberInputValue(formData.bag_weight_kg)}
+                onChange={(e) =>
+                  setFormData({ ...formData, bag_weight_kg: parseFormFloat(e.target.value, 0) })
+                }
                 helperText="Este valor recuerda el último peso ingresado."
                 required
               />
@@ -819,15 +964,42 @@ export default function Gastos() {
               type="number"
               step="0.01"
               min="0"
-              value={formData.quantity_kg}
-              onChange={(e) => setFormData({ ...formData, quantity_kg: parseFloat(e.target.value) || 0 })}
+              value={numberInputValue(formData.quantity_kg)}
+              onChange={(e) =>
+                setFormData({ ...formData, quantity_kg: parseFormFloat(e.target.value, 0) })
+              }
               required
             />
           ) : null}
 
+          {isMaplesForm && (
+            <>
+              <Select
+                label="Tipo de packaging (opcional)"
+                options={PACKAGING_ITEM_OPTIONS}
+                value={formData.packaging_item_key}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    packaging_item_key: e.target.value as PackagingItemKey | '',
+                  })
+                }
+              />
+              <Input
+                label="Cantidad (opcional)"
+                type="number"
+                step="1"
+                min="0"
+                value={formData.packaging_quantity}
+                onChange={(e) => setFormData({ ...formData, packaging_quantity: e.target.value })}
+                helperText="Unidades compradas para el stock de inventario. El costo sigue siendo obligatorio."
+              />
+            </>
+          )}
+
           {isAlimentoForm && formData.unit === 'bolsas' ? (
             <Input
-              label="Total"
+              label="Costo Total"
               type="number"
               step="0.01"
               value={Number.isFinite(totalFromBagsPrice) ? totalFromBagsPrice : 0}
@@ -838,11 +1010,13 @@ export default function Gastos() {
             />
           ) : (
             <Input
-              label="Total"
+              label="Costo Total"
               type="number"
               step="0.01"
-              value={formData.total_price}
-              onChange={(e) => setFormData({ ...formData, total_price: parseFloat(e.target.value) || 0 })}
+              value={numberInputValue(formData.total_price)}
+              onChange={(e) =>
+                setFormData({ ...formData, total_price: parseFormFloat(e.target.value, 0) })
+              }
               required
             />
           )}
@@ -865,8 +1039,24 @@ export default function Gastos() {
       >
         <form onSubmit={handleSaveConsumption} className="space-y-4">
           <p className="text-sm text-gray-600">
-            Mes seleccionado: <strong>{selectedMonthLabel}</strong> {selectedYear}
+            Declará el consumo total del mes, aunque peses o controles el alimento con otra
+            frecuencia en tu galpón. Este dato es el que usa el sistema para calcular tu Inventario
+            y Estadísticas.
           </p>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Select
+              label="Año"
+              options={yearOptions}
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(e.target.value)}
+            />
+            <Select
+              label="Mes"
+              options={CONSUMPTION_MONTH_OPTIONS}
+              value={selectedMonth || String(now.getMonth() + 1).padStart(2, '0')}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+            />
+          </div>
           <p className="text-sm text-gray-600">
             Gallinero: <strong>{consumptionGallineroLabel}</strong>
           </p>
