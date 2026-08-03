@@ -785,6 +785,12 @@ export default function Produccion({
                       <span className="ml-1 text-base font-medium text-gray-500">kg</span>
                     ) : null}
                   </p>
+                  {feedSnapshot != null ? (
+                    <p className="mt-1 text-xs text-gray-500 tabular-nums">
+                      Compras {feedSnapshot.purchasedKg.toFixed(1)} − Consumo{' '}
+                      {feedSnapshot.consumedKg.toFixed(1)}
+                    </p>
+                  ) : null}
                 </div>
                 <div>
                   <p className="text-sm text-gray-600 mb-1">Alcance (desde hoy)</p>

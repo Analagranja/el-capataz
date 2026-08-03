@@ -16,6 +16,7 @@ import {
   estimateDaysFromFeedKg,
   estimateFeedDaysRemaining,
   mapleImpactForSale,
+  sumDeclaredFeedConsumptionKg,
   type MapleStockItemKey,
 } from './inventoryStockCalc';
 import type { FeedConsumptionMonthly, ProductionRecord, Sale, SaleType } from '../types';
@@ -368,6 +369,65 @@ check('dateOnOrAfter inclusive', () => {
   assert.equal(dateOnOrAfter('2026-08-03', '2026-08-03'), true);
   assert.equal(dateOnOrAfter('2026-08-02', '2026-08-03'), false);
   assert.equal(dateOnOrAfter('2026-08-04', '2026-08-03'), true);
+});
+
+check('consumo stock: no doblecuenta org + gallinero del mismo mes', () => {
+  const rows: FeedConsumptionMonthly[] = [
+    {
+      id: '1',
+      organization_id: 'org',
+      gallinero_id: null,
+      year: 2026,
+      month: 7,
+      kg_consumed: 525,
+      notes: null,
+      hens_snapshot: 147,
+      created_at: '2026-08-01T00:00:00.000Z',
+      updated_at: '2026-08-01T00:00:00.000Z',
+    },
+    {
+      id: '2',
+      organization_id: 'org',
+      gallinero_id: 'g1',
+      year: 2026,
+      month: 7,
+      kg_consumed: 525,
+      notes: null,
+      hens_snapshot: 147,
+      created_at: '2026-08-01T00:00:00.000Z',
+      updated_at: '2026-08-01T00:00:00.000Z',
+    },
+  ];
+  assert.equal(sumDeclaredFeedConsumptionKg(rows), 525);
+  assert.equal(computeFeedStockKg(1050, sumDeclaredFeedConsumptionKg(rows)), 525);
+});
+
+check('consumo stock: sin org suma gallineros', () => {
+  const rows: FeedConsumptionMonthly[] = [
+    {
+      id: '1',
+      organization_id: 'org',
+      gallinero_id: 'g1',
+      year: 2026,
+      month: 6,
+      kg_consumed: 200,
+      notes: null,
+      created_at: '2026-07-01T00:00:00.000Z',
+      updated_at: '2026-07-01T00:00:00.000Z',
+    },
+    {
+      id: '2',
+      organization_id: 'org',
+      gallinero_id: 'g2',
+      year: 2026,
+      month: 6,
+      kg_consumed: 150,
+      notes: null,
+      created_at: '2026-07-01T00:00:00.000Z',
+      updated_at: '2026-07-01T00:00:00.000Z',
+    },
+  ];
+  assert.equal(sumDeclaredFeedConsumptionKg(rows), 350);
 });
 
 console.log(`\n${passed} tests passed`);

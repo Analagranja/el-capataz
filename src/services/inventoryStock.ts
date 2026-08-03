@@ -16,6 +16,7 @@ import {
   computeMapleStockFromBaseline,
   dateOnOrAfter,
   estimateFeedDaysRemaining,
+  sumDeclaredFeedConsumptionKg,
   type EggStockItemKey,
   type MapleStockItemKey,
   EGG_STOCK_LABELS,
@@ -40,6 +41,8 @@ export {
   computeFeedStockKg,
   aggregateClosedMonthFeedRates,
   averageGramsPerHenDayFromClosedMonths,
+  sumDeclaredFeedConsumptionKg,
+  sumKgForMonthRows,
   estimateDaysFromFeedKg,
   estimateFeedDaysRemaining,
   formatFeedReachFromToday,
@@ -75,6 +78,10 @@ export interface MapleInventorySnapshot {
 
 export interface FeedInventorySnapshot {
   stockKg: number;
+  /** Suma de compras Alimento (Gastos). */
+  purchasedKg: number;
+  /** Suma de consumo mensual declarado (sin doblecontar org + gallinero). */
+  consumedKg: number;
   daysRemaining: number | null;
   /** g/ave/día usado para estimar días (historial plausible o default 117). */
   gramsPerHenDay: number;
@@ -359,7 +366,7 @@ export const inventoryStockService = {
       purchasedKg += resolveExpenseKg(row as Record<string, unknown>);
     }
     const consumptions = mapConsumptions((consumptionRes.data || []) as Array<Record<string, unknown>>);
-    const consumedKg = consumptions.reduce((sum, c) => sum + Math.max(0, Number(c.kg_consumed) || 0), 0);
+    const consumedKg = sumDeclaredFeedConsumptionKg(consumptions);
     const stockKg = computeFeedStockKg(purchasedKg, consumedKg);
     const activeHens = gallineros.reduce(
       (sum, g) => sum + Math.max(0, Math.floor(Number(g.current_count) || 0)),
@@ -369,6 +376,8 @@ export const inventoryStockService = {
     const lastClosed = aggregateClosedMonthFeedRates(consumptions, activeHens)[0] ?? null;
     return {
       stockKg,
+      purchasedKg,
+      consumedKg,
       daysRemaining: estimate.daysRemaining,
       gramsPerHenDay: estimate.gramsPerHenDay,
       gramsSource: estimate.gramsSource,

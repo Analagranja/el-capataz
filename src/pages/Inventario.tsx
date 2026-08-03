@@ -186,6 +186,10 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
               {formatQty(feed?.stockKg ?? 0, 2)}
               <span className="ml-2 text-base font-medium text-gray-500">kg</span>
             </p>
+            <p className="text-xs text-gray-600 tabular-nums">
+              Compras {formatQty(feed?.purchasedKg ?? 0, 2)} kg − Consumo declarado{' '}
+              {formatQty(feed?.consumedKg ?? 0, 2)} kg
+            </p>
             <p className="text-sm text-gray-700">
               {feed?.daysRemaining == null ? (
                 <>

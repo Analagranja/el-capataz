@@ -237,9 +237,8 @@ export function aggregateClosedMonthFeedRates(
     const daysInMonth = new Date(year, month, 0).getDate();
     if (daysInMonth <= 0) continue;
 
+    const kgConsumed = sumKgForMonthRows(rows);
     const orgLevel = rows.filter((r) => r.gallinero_id == null);
-    const kgSource = orgLevel.length > 0 ? orgLevel : rows;
-    const kgConsumed = kgSource.reduce((sum, r) => sum + Math.max(0, Number(r.kg_consumed) || 0), 0);
 
     const hensFromOrg = orgLevel.find((r) => r.hens_snapshot != null && r.hens_snapshot > 0);
     const hensFromAny = rows.find((r) => r.hens_snapshot != null && r.hens_snapshot > 0);
@@ -262,6 +261,33 @@ export function aggregateClosedMonthFeedRates(
   }
 
   return out;
+}
+
+/** Kg de un mes: prioriza declaración de granja general; si no hay, suma gallineros. */
+export function sumKgForMonthRows(rows: FeedConsumptionMonthly[]): number {
+  const orgLevel = rows.filter((r) => r.gallinero_id == null);
+  const kgSource = orgLevel.length > 0 ? orgLevel : rows;
+  return kgSource.reduce((sum, r) => sum + Math.max(0, Number(r.kg_consumed) || 0), 0);
+}
+
+/**
+ * Consumo total declarado para stock de alimento (todos los meses).
+ * Misma regla anti-dobleconteo que Estadísticas por (año, mes).
+ */
+export function sumDeclaredFeedConsumptionKg(consumptions: FeedConsumptionMonthly[]): number {
+  const byMonth = new Map<string, FeedConsumptionMonthly[]>();
+  for (const c of consumptions) {
+    if ((Number(c.kg_consumed) || 0) <= 0) continue;
+    const key = monthKey(c.year, c.month);
+    const list = byMonth.get(key);
+    if (list) list.push(c);
+    else byMonth.set(key, [c]);
+  }
+  let total = 0;
+  for (const rows of byMonth.values()) {
+    total += sumKgForMonthRows(rows);
+  }
+  return total;
 }
 
 export function isPlausibleFeedGramsPerHenDay(grams: number): boolean {
