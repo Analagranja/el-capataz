@@ -10,6 +10,8 @@ import {
   computeEggStock,
   computeFeedStockKg,
   computeMapleStock,
+  computeMapleStockFromBaseline,
+  dateOnOrAfter,
   eggImpactForSale,
   estimateDaysFromFeedKg,
   estimateFeedDaysRemaining,
@@ -341,6 +343,31 @@ check('validación maples: toast case', () => {
 check('impacto maple packaging', () => {
   assert.deepEqual(mapleImpactForSale('maple_mediano', 2), { key: 'maple', units: 2 });
   assert.deepEqual(mapleImpactForSale('docena', 3), { key: 'docena', units: 3 });
+});
+
+check('baseline null = histórico (retrocompatible)', () => {
+  const purchased = { maple: 10, docena: 0, media_docena: 0 };
+  const sales = [sale('maple', 3)];
+  assert.deepEqual(
+    computeMapleStockFromBaseline(purchased, sales, null),
+    computeMapleStock(purchased, sales)
+  );
+});
+
+check('baseline + movimientos desde la fecha', () => {
+  const baseline = { maple: 100, docena: 20, media_docena: 5 };
+  const purchasedAfter = { maple: 10, docena: 0, media_docena: 0 };
+  const salesAfter = [sale('maple', 4, '2026-08-03'), sale('docena', 2, '2026-08-03')];
+  const stock = computeMapleStockFromBaseline(purchasedAfter, salesAfter, baseline);
+  assert.equal(stock.maple, 106); // 100 + 10 - 4
+  assert.equal(stock.docena, 18); // 20 - 2
+  assert.equal(stock.media_docena, 5);
+});
+
+check('dateOnOrAfter inclusive', () => {
+  assert.equal(dateOnOrAfter('2026-08-03', '2026-08-03'), true);
+  assert.equal(dateOnOrAfter('2026-08-02', '2026-08-03'), false);
+  assert.equal(dateOnOrAfter('2026-08-04', '2026-08-03'), true);
 });
 
 console.log(`\n${passed} tests passed`);

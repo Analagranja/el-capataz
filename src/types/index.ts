@@ -148,6 +148,19 @@ export interface Expense {
 
 export type InventoryCategory = 'eggs' | 'feed' | 'maples';
 
+/** Apertura de packaging: stock físico declarado para resetear la línea base. */
+export interface PackagingStockBaseline {
+  id: string;
+  organization_id: string;
+  baseline_date: string;
+  maple: number;
+  docena: number;
+  media_docena: number;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface InventoryCount {
   id: string;
   organization_id: string;

@@ -135,6 +135,30 @@ export function computeMapleStock(
   };
 }
 
+/**
+ * Con línea base: stock = baseline + (compras ≥ fecha − ventas ≥ fecha).
+ * Sin baseline (null): misma lógica histórica que computeMapleStock.
+ * purchasedAfter / salesAfter deben venir ya filtrados por baseline_date cuando hay baseline.
+ */
+export function computeMapleStockFromBaseline(
+  purchasedAfter: Record<MapleStockItemKey, number>,
+  salesAfter: Sale[],
+  baselineByItem: Record<MapleStockItemKey, number> | null
+): Record<MapleStockItemKey, number> {
+  const movement = computeMapleStock(purchasedAfter, salesAfter);
+  if (!baselineByItem) return movement;
+  return {
+    maple: (baselineByItem.maple || 0) + movement.maple,
+    docena: (baselineByItem.docena || 0) + movement.docena,
+    media_docena: (baselineByItem.media_docena || 0) + movement.media_docena,
+  };
+}
+
+/** YYYY-MM-DD ≥ cutoff (inclusive). */
+export function dateOnOrAfter(dateYmd: string, cutoffYmd: string): boolean {
+  return String(dateYmd || '').slice(0, 10) >= String(cutoffYmd || '').slice(0, 10);
+}
+
 /** Stock alimento (kg) = compras Alimento − consumo declarado. */
 export function computeFeedStockKg(purchasedKg: number, consumedKg: number): number {
   return (Number(purchasedKg) || 0) - (Number(consumedKg) || 0);

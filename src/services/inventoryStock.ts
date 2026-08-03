@@ -1,11 +1,20 @@
 import { supabase } from './supabase';
-import type { FeedConsumptionMonthly, PackagingItemKey, ProductionRecord, Sale, SaleType } from '../types';
+import type {
+  FeedConsumptionMonthly,
+  PackagingItemKey,
+  PackagingStockBaseline,
+  ProductionRecord,
+  Sale,
+  SaleType,
+} from '../types';
 import { gallinerosService } from './gallineros';
 import {
   computeEggStock,
   aggregateClosedMonthFeedRates,
   computeFeedStockKg,
   computeMapleStock,
+  computeMapleStockFromBaseline,
+  dateOnOrAfter,
   estimateFeedDaysRemaining,
   type EggStockItemKey,
   type MapleStockItemKey,
@@ -26,6 +35,8 @@ export {
   mapleImpactForSale,
   computeEggStock,
   computeMapleStock,
+  computeMapleStockFromBaseline,
+  dateOnOrAfter,
   computeFeedStockKg,
   aggregateClosedMonthFeedRates,
   averageGramsPerHenDayFromClosedMonths,
@@ -55,6 +66,11 @@ export interface EggInventorySnapshot {
 
 export interface MapleInventorySnapshot {
   byItem: Record<MapleStockItemKey, number>;
+  /** Null = sin apertura; cálculo histórico completo (retrocompatible). */
+  baseline: {
+    baselineDate: string;
+    byItem: Record<MapleStockItemKey, number>;
+  } | null;
 }
 
 export interface FeedInventorySnapshot {
@@ -96,6 +112,32 @@ function resolveExpenseKg(row: Record<string, unknown>): number {
   return resolveExpenseQuantityKg(row);
 }
 
+function isMissingBaselineTableError(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  const code = String(error.code || '');
+  const msg = String(error.message || '').toLowerCase();
+  return (
+    code === '42P01' ||
+    code === 'PGRST205' ||
+    (msg.includes('packaging_stock_baselines') &&
+      (msg.includes('does not exist') || msg.includes('could not find') || msg.includes('schema cache')))
+  );
+}
+
+function mapBaselineRow(row: Record<string, unknown>): PackagingStockBaseline {
+  return {
+    id: row.id as string,
+    organization_id: row.organization_id as string,
+    baseline_date: String(row.baseline_date).slice(0, 10),
+    maple: Math.max(0, Math.floor(Number(row.maple) || 0)),
+    docena: Math.max(0, Math.floor(Number(row.docena) || 0)),
+    media_docena: Math.max(0, Math.floor(Number(row.media_docena) || 0)),
+    created_by: (row.created_by as string | null) ?? null,
+    created_at: row.created_at as string,
+    updated_at: row.updated_at as string,
+  };
+}
+
 async function fetchSales(organizationId: string): Promise<Sale[]> {
   const { data, error } = await supabase
     .from('sales')
@@ -125,8 +167,31 @@ async function fetchProduction(organizationId: string): Promise<ProductionRecord
   return (data || []) as ProductionRecord[];
 }
 
+async function fetchPackagingBaseline(
+  organizationId: string
+): Promise<PackagingStockBaseline | null> {
+  const { data, error } = await supabase
+    .from('packaging_stock_baselines')
+    .select(
+      'id, organization_id, baseline_date, maple, docena, media_docena, created_by, created_at, updated_at'
+    )
+    .eq('organization_id', organizationId)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingBaselineTableError(error)) {
+      console.warn('packaging_stock_baselines unavailable; using historic maple stock:', error.message);
+      return null;
+    }
+    throw error;
+  }
+  if (!data) return null;
+  return mapBaselineRow(data as Record<string, unknown>);
+}
+
 function sumPackagingPurchases(
-  rows: Array<Record<string, unknown>>
+  rows: Array<Record<string, unknown>>,
+  fromDateInclusive?: string | null
 ): Record<MapleStockItemKey, number> {
   const out: Record<MapleStockItemKey, number> = {
     maple: 0,
@@ -134,6 +199,10 @@ function sumPackagingPurchases(
     media_docena: 0,
   };
   for (const row of rows) {
+    if (fromDateInclusive) {
+      const expenseDate = String(row.expense_date ?? '').slice(0, 10);
+      if (!expenseDate || !dateOnOrAfter(expenseDate, fromDateInclusive)) continue;
+    }
     const qty = Number(row.packaging_quantity);
     const key = row.packaging_item_key as PackagingItemKey | null;
     if (!Number.isFinite(qty) || qty <= 0 || !key || !(key in out)) continue;
@@ -162,6 +231,7 @@ function mapConsumptions(rows: Array<Record<string, unknown>>): FeedConsumptionM
 
 /**
  * Inventario automático: stock = entradas − salidas (histórico completo).
+ * Packaging puede usar apertura opcional (packaging_stock_baselines).
  * No usa inventory_counts (tabla queda sin uso; no se elimina).
  */
 export const inventoryStockService = {
@@ -181,29 +251,89 @@ export const inventoryStockService = {
   },
 
   async loadMapleInventory(organizationId: string): Promise<MapleInventorySnapshot> {
-    const [sales, expensesRes] = await Promise.all([
+    const [sales, expensesRes, baseline] = await Promise.all([
       fetchSales(organizationId),
       supabase
         .from('expenses')
-        .select('packaging_quantity, packaging_item_key, description')
+        .select('expense_date, packaging_quantity, packaging_item_key, description')
         .eq('organization_id', organizationId)
         .eq('description', 'Maples / Packaging')
         .not('packaging_quantity', 'is', null),
+      fetchPackagingBaseline(organizationId),
     ]);
 
-    let purchased: Record<MapleStockItemKey, number> = {
-      maple: 0,
-      docena: 0,
-      media_docena: 0,
-    };
+    let expenseRows: Array<Record<string, unknown>> = [];
     if (expensesRes.error) {
       // Columnas packaging pueden no existir aún en alguna org: stock solo por salidas.
       console.warn('Maples packaging expenses unavailable:', expensesRes.error.message);
     } else {
-      purchased = sumPackagingPurchases((expensesRes.data || []) as Array<Record<string, unknown>>);
+      expenseRows = (expensesRes.data || []) as Array<Record<string, unknown>>;
     }
 
-    return { byItem: computeMapleStock(purchased, sales) };
+    if (!baseline) {
+      const purchased = sumPackagingPurchases(expenseRows);
+      return { byItem: computeMapleStock(purchased, sales), baseline: null };
+    }
+
+    const cutoff = baseline.baseline_date;
+    const purchasedAfter = sumPackagingPurchases(expenseRows, cutoff);
+    const salesAfter = sales.filter((s) => dateOnOrAfter(s.date, cutoff));
+    const baselineByItem: Record<MapleStockItemKey, number> = {
+      maple: baseline.maple,
+      docena: baseline.docena,
+      media_docena: baseline.media_docena,
+    };
+    return {
+      byItem: computeMapleStockFromBaseline(purchasedAfter, salesAfter, baselineByItem),
+      baseline: { baselineDate: cutoff, byItem: baselineByItem },
+    };
+  },
+
+  /**
+   * Declara o actualiza la apertura de packaging (upsert por organización).
+   * Requiere que la migración packaging_stock_baselines esté aplicada.
+   */
+  async savePackagingBaseline(
+    organizationId: string,
+    createdBy: string | null,
+    input: {
+      baselineDate: string;
+      maple: number;
+      docena: number;
+      media_docena: number;
+    }
+  ): Promise<PackagingStockBaseline> {
+    const baseline_date = String(input.baselineDate).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(baseline_date)) {
+      throw new Error('Fecha de apertura inválida');
+    }
+    const payload = {
+      organization_id: organizationId,
+      baseline_date,
+      maple: Math.max(0, Math.floor(Number(input.maple) || 0)),
+      docena: Math.max(0, Math.floor(Number(input.docena) || 0)),
+      media_docena: Math.max(0, Math.floor(Number(input.media_docena) || 0)),
+      created_by: createdBy,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from('packaging_stock_baselines')
+      .upsert(payload, { onConflict: 'organization_id' })
+      .select(
+        'id, organization_id, baseline_date, maple, docena, media_docena, created_by, created_at, updated_at'
+      )
+      .single();
+
+    if (error) {
+      if (isMissingBaselineTableError(error)) {
+        throw new Error(
+          'Falta aplicar la migración de apertura de packaging en la base de datos. Pedile a quien administra el proyecto que ejecute el SQL en Supabase.'
+        );
+      }
+      throw error;
+    }
+    return mapBaselineRow(data as Record<string, unknown>);
   },
 
   async loadFeedInventory(organizationId: string): Promise<FeedInventorySnapshot> {
