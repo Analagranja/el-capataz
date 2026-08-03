@@ -69,13 +69,13 @@ export function mapleImpactForSale(
 }
 
 /**
- * Stock de huevos acumulado: misma lógica que el Panel (Dashboard).
+ * Stock de huevos acumulado (histórico completo). Usado por Inventario y Panel.
  *
  * - Cada tamaño (grande/mediano/chico) se agota hasta 0; nunca queda negativo.
  * - El excedente de una sobreventa por tamaño (y las ventas genéricas) se
  *   refleja en "Sin clasificar" vía el residual:
  *   sin_clasificar = stockDisponible − grande − mediano − chico
- *   (ambos lados con piso en 0, igual que el Panel).
+ *   (ambos lados con piso en 0).
  */
 export function computeEggStock(
   production: ProductionRecord[],

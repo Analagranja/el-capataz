@@ -1,10 +1,14 @@
 import React from 'react';
-import { Event, EventType, Expense, Gallinero, ProductionRecord, Sale, SaleType } from '../types';
+import { Event, EventType, Expense, Gallinero, ProductionRecord, Sale } from '../types';
 import { gallinerosService } from '../services/gallineros';
 import { productionService, computeLayingPercentage } from '../services/production';
 import { salesService } from '../services/sales';
 import { eventsService } from '../services/events';
 import { expensesService } from '../services/expenses';
+import {
+  inventoryStockService,
+  type EggInventorySnapshot,
+} from '../services/inventoryStock';
 import { useAuth } from '../contexts/AuthContext';
 import { useDashboardMetricsTick } from '../contexts/DashboardMetricsRefreshContext';
 import { computeMonthToDateTotals, currentMonthStartLocalYmd, todayLocalYmd } from '../utils/monthToDateFinance';
@@ -14,17 +18,14 @@ import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import FeedConsumptionMissingReminder from '../components/FeedConsumptionMissingReminder';
 
-const EGGS_PER_SALE_TYPE: Record<SaleType, number> = {
-  maple: 30,
-  docena: 12,
-  media_docena: 6,
-  pack15: 15,
-  maple_grande: 30,
-  maple_mediano: 30,
-  maple_chico: 30,
-};
-
 const STOCK_Umbral_KEY = 'stock_umbral_alerta';
+
+const EMPTY_EGG_STOCK: EggInventorySnapshot = {
+  bySize: { grande: 0, mediano: 0, chico: 0, sin_clasificar: 0 },
+  total: 0,
+  totalProduced: 0,
+  totalSold: 0,
+};
 
 interface DashboardProps {
   selectedGallineroId: string | null;
@@ -91,8 +92,7 @@ export default function Dashboard({
   const [sanidadReminder, setSanidadReminder] = React.useState<Event | null>(null);
   const [markingSanidadDone, setMarkingSanidadDone] = React.useState(false);
   const [expenses, setExpenses] = React.useState<Expense[]>([]);
-  const [stockProduction, setStockProduction] = React.useState<ProductionRecord[]>([]);
-  const [stockSales, setStockSales] = React.useState<Sale[]>([]);
+  const [eggStock, setEggStock] = React.useState<EggInventorySnapshot>(EMPTY_EGG_STOCK);
   const [umbralAlerta, setUmbralAlerta] = React.useState(100);
   const [loading, setLoading] = React.useState(true);
 
@@ -112,17 +112,23 @@ export default function Dashboard({
         setLoading(true);
         const monthStartYmd = currentMonthStartLocalYmd();
         const todayYmd = todayLocalYmd();
-        const [gallinerosData, productionMonthData, productionRecentData, salesMonthData, expensesMonthData, nextSanidad, stockProdData, stockSalesData] =
-          await Promise.all([
-            gallinerosService.getAll(organizationId),
-            productionService.getAllRange(organizationId, monthStartYmd, todayYmd),
-            productionService.getAll(organizationId, 30),
-            salesService.getAllRange(organizationId, monthStartYmd, todayYmd),
-            expensesService.getAllRange(organizationId, monthStartYmd, todayYmd),
-            eventsService.getNextSanidadReminder(organizationId),
-            productionService.getAll(organizationId, 90),
-            salesService.getAll(organizationId, 90),
-          ]);
+        const [
+          gallinerosData,
+          productionMonthData,
+          productionRecentData,
+          salesMonthData,
+          expensesMonthData,
+          nextSanidad,
+          eggInventory,
+        ] = await Promise.all([
+          gallinerosService.getAll(organizationId),
+          productionService.getAllRange(organizationId, monthStartYmd, todayYmd),
+          productionService.getAll(organizationId, 30),
+          salesService.getAllRange(organizationId, monthStartYmd, todayYmd),
+          expensesService.getAllRange(organizationId, monthStartYmd, todayYmd),
+          eventsService.getNextSanidadReminder(organizationId),
+          inventoryStockService.loadEggInventory(organizationId),
+        ]);
 
         setGallineros(gallinerosData);
         setProductionMonth(productionMonthData);
@@ -130,8 +136,7 @@ export default function Dashboard({
         setSales(salesMonthData);
         setExpenses(expensesMonthData);
         setSanidadReminder(nextSanidad);
-        setStockProduction(stockProdData);
-        setStockSales(stockSalesData);
+        setEggStock(eggInventory);
       } catch (error) {
         console.error('Error loading dashboard data:', error);
       } finally {
@@ -185,54 +190,6 @@ export default function Dashboard({
     production.length > 0
       ? production.reduce((sum, p) => sum + getLayingPercentageForRecord(p), 0) / production.length
       : 0;
-
-  const stockMetrics = React.useMemo(() => {
-    const totalProducidos = stockProduction.reduce((sum, p) => sum + p.eggs_count, 0);
-    const totalVendidos = stockSales.reduce(
-      (sum, s) => sum + s.quantity * (EGGS_PER_SALE_TYPE[s.type] || 0),
-      0
-    );
-    const stockDisponible = Math.max(0, totalProducidos - totalVendidos);
-
-    const hasClassification = stockProduction.some(
-      (p) => p.eggs_large != null || p.eggs_medium != null || p.eggs_small != null
-    );
-
-    if (!hasClassification) {
-      return { totalProducidos, totalVendidos, stockDisponible, stockPorTamano: null };
-    }
-
-    const producedLarge = stockProduction.reduce((s, p) => s + (p.eggs_large ?? 0), 0);
-    const producedMedium = stockProduction.reduce((s, p) => s + (p.eggs_medium ?? 0), 0);
-    const producedSmall = stockProduction.reduce((s, p) => s + (p.eggs_small ?? 0), 0);
-
-    const soldLarge = stockSales
-      .filter((s) => s.type === 'maple_grande')
-      .reduce((sum, s) => sum + s.quantity * 30, 0);
-    const soldMedium = stockSales
-      .filter((s) => s.type === 'maple_mediano')
-      .reduce((sum, s) => sum + s.quantity * 30, 0);
-    const soldSmall = stockSales
-      .filter((s) => s.type === 'maple_chico')
-      .reduce((sum, s) => sum + s.quantity * 30, 0);
-
-    const stockGrande = Math.max(0, producedLarge - soldLarge);
-    const stockMediano = Math.max(0, producedMedium - soldMedium);
-    const stockChico = Math.max(0, producedSmall - soldSmall);
-    const stockSinClasificar = Math.max(0, stockDisponible - stockGrande - stockMediano - stockChico);
-
-    return {
-      totalProducidos,
-      totalVendidos,
-      stockDisponible,
-      stockPorTamano: {
-        grande: stockGrande,
-        mediano: stockMediano,
-        chico: stockChico,
-        sinClasificar: stockSinClasificar,
-      },
-    };
-  }, [stockProduction, stockSales]);
 
   const handleSaveUmbralAlerta = () => {
     localStorage.setItem(STOCK_Umbral_KEY, String(umbralAlerta));
@@ -440,49 +397,47 @@ export default function Dashboard({
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Stock de Huevos</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <p className="text-sm text-gray-600 mb-1">Producidos (90 días)</p>
-            <p className="text-2xl font-bold text-gray-900">{stockMetrics.totalProducidos}</p>
+            <p className="text-sm text-gray-600 mb-1">Producidos</p>
+            <p className="text-2xl font-bold text-gray-900">{eggStock.totalProduced}</p>
           </div>
           <div>
-            <p className="text-sm text-gray-600 mb-1">Vendidos (90 días)</p>
-            <p className="text-2xl font-bold text-gray-900">{stockMetrics.totalVendidos}</p>
+            <p className="text-sm text-gray-600 mb-1">Vendidos</p>
+            <p className="text-2xl font-bold text-gray-900">{eggStock.totalSold}</p>
           </div>
           <div>
             <p className="text-sm text-gray-600 mb-1">Disponibles</p>
             <p
               className={`text-2xl font-bold ${
-                stockMetrics.stockDisponible < umbralAlerta ? 'text-red-600' : 'text-green-700'
+                eggStock.total < umbralAlerta ? 'text-red-600' : 'text-green-700'
               }`}
             >
-              {stockMetrics.stockDisponible}
+              {eggStock.total}
             </p>
-            {stockMetrics.stockDisponible < umbralAlerta && (
+            {eggStock.total < umbralAlerta && (
               <p className="text-xs text-red-500 mt-1">⚠️ Stock bajo</p>
             )}
           </div>
         </div>
-        {stockMetrics.stockPorTamano ? (
-          <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 rounded-lg bg-gray-50 p-3 text-sm">
-            <div>
-              <p className="text-gray-600">Grandes</p>
-              <p className="font-semibold text-gray-900">{stockMetrics.stockPorTamano.grande}</p>
-            </div>
-            <div>
-              <p className="text-gray-600">Medianos</p>
-              <p className="font-semibold text-gray-900">{stockMetrics.stockPorTamano.mediano}</p>
-            </div>
-            <div>
-              <p className="text-gray-600">Chicos</p>
-              <p className="font-semibold text-gray-900">{stockMetrics.stockPorTamano.chico}</p>
-            </div>
-            <div>
-              <p className="text-gray-600">Sin clasificar</p>
-              <p className="font-semibold text-gray-900">{stockMetrics.stockPorTamano.sinClasificar}</p>
-            </div>
+        <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 rounded-lg bg-gray-50 p-3 text-sm">
+          <div>
+            <p className="text-gray-600">Grandes</p>
+            <p className="font-semibold text-gray-900">{eggStock.bySize.grande}</p>
           </div>
-        ) : null}
+          <div>
+            <p className="text-gray-600">Medianos</p>
+            <p className="font-semibold text-gray-900">{eggStock.bySize.mediano}</p>
+          </div>
+          <div>
+            <p className="text-gray-600">Chicos</p>
+            <p className="font-semibold text-gray-900">{eggStock.bySize.chico}</p>
+          </div>
+          <div>
+            <p className="text-gray-600">Sin clasificar</p>
+            <p className="font-semibold text-gray-900">{eggStock.bySize.sin_clasificar}</p>
+          </div>
+        </div>
         <p className="text-xs text-gray-400 mt-3">
-          Basado en producción y ventas de los últimos 90 días
+          Stock consolidado = producción − ventas (histórico completo, misma lógica que Inventario)
         </p>
         <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-gray-100 pt-4">
           <div className="w-40">

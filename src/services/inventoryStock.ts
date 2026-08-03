@@ -10,6 +10,7 @@ import {
   type EggStockItemKey,
   type MapleStockItemKey,
   EGG_STOCK_LABELS,
+  EGGS_PER_SALE_TYPE,
   MAPLE_STOCK_LABELS,
 } from './inventoryStockCalc';
 import { resolveExpenseQuantityKg } from './expenseQuantity';
@@ -44,7 +45,12 @@ export type {
 
 export interface EggInventorySnapshot {
   bySize: Record<EggStockItemKey, number>;
+  /** Stock disponible (entradas − salidas, piso 0). */
   total: number;
+  /** Suma de eggs_count en todo el historial de producción. */
+  totalProduced: number;
+  /** Huevos equivalentes vendidos en todo el historial. */
+  totalSold: number;
 }
 
 export interface MapleInventorySnapshot {
@@ -166,7 +172,12 @@ export const inventoryStockService = {
     ]);
     const bySize = computeEggStock(production, sales);
     const total = bySize.grande + bySize.mediano + bySize.chico + bySize.sin_clasificar;
-    return { bySize, total };
+    const totalProduced = production.reduce((sum, p) => sum + (p.eggs_count || 0), 0);
+    const totalSold = sales.reduce(
+      (sum, s) => sum + s.quantity * (EGGS_PER_SALE_TYPE[s.type] || 0),
+      0
+    );
+    return { bySize, total, totalProduced, totalSold };
   },
 
   async loadMapleInventory(organizationId: string): Promise<MapleInventorySnapshot> {
