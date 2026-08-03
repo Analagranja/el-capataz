@@ -159,9 +159,31 @@ export function dateOnOrAfter(dateYmd: string, cutoffYmd: string): boolean {
   return String(dateYmd || '').slice(0, 10) >= String(cutoffYmd || '').slice(0, 10);
 }
 
+/** Mes (year, month) ≥ mes del cutoff YYYY-MM-DD (inclusive). */
+export function yearMonthOnOrAfter(year: number, month: number, cutoffYmd: string): boolean {
+  const y = Number(String(cutoffYmd).slice(0, 4));
+  const m = Number(String(cutoffYmd).slice(5, 7));
+  if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) return true;
+  const yy = Number(year);
+  const mm = Number(month);
+  if (!Number.isFinite(yy) || !Number.isFinite(mm)) return false;
+  return yy > y || (yy === y && mm >= m);
+}
+
 /** Stock alimento (kg) = compras Alimento − consumo declarado. */
 export function computeFeedStockKg(purchasedKg: number, consumedKg: number): number {
   return (Number(purchasedKg) || 0) - (Number(consumedKg) || 0);
+}
+
+/** Stock = baseline (si hay) + compras − consumo (ambos ya filtrados por fecha). */
+export function computeFeedStockFromBaseline(
+  purchasedKg: number,
+  consumedKg: number,
+  baselineKg: number | null
+): number {
+  const movement = computeFeedStockKg(purchasedKg, consumedKg);
+  if (baselineKg == null) return movement;
+  return (Number(baselineKg) || 0) + movement;
 }
 
 /**
@@ -271,13 +293,18 @@ export function sumKgForMonthRows(rows: FeedConsumptionMonthly[]): number {
 }
 
 /**
- * Consumo total declarado para stock de alimento (todos los meses).
+ * Consumo total declarado para stock de alimento.
  * Misma regla anti-dobleconteo que Estadísticas por (año, mes).
+ * Si fromBaselineDate, solo meses ≥ mes de esa fecha.
  */
-export function sumDeclaredFeedConsumptionKg(consumptions: FeedConsumptionMonthly[]): number {
+export function sumDeclaredFeedConsumptionKg(
+  consumptions: FeedConsumptionMonthly[],
+  fromBaselineDate?: string | null
+): number {
   const byMonth = new Map<string, FeedConsumptionMonthly[]>();
   for (const c of consumptions) {
     if ((Number(c.kg_consumed) || 0) <= 0) continue;
+    if (fromBaselineDate && !yearMonthOnOrAfter(c.year, c.month, fromBaselineDate)) continue;
     const key = monthKey(c.year, c.month);
     const list = byMonth.get(key);
     if (list) list.push(c);

@@ -38,6 +38,8 @@ type InventarioProps = {
   onNavigateToFeedConsumption?: (target: { year: number; month: number }) => void;
 };
 
+type BaselineKind = 'maples' | 'feed';
+
 export default function Inventario({ onNavigateToFeedConsumption }: InventarioProps) {
   const { organizationId, user } = useAuth();
   const [loading, setLoading] = React.useState(true);
@@ -46,14 +48,16 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
   const [feed, setFeed] = React.useState<FeedInventorySnapshot | null>(null);
   const [maples, setMaples] = React.useState<MapleInventorySnapshot | null>(null);
 
-  const [baselineOpen, setBaselineOpen] = React.useState(false);
+  const [baselineKind, setBaselineKind] = React.useState<BaselineKind | null>(null);
   const [baselineSaving, setBaselineSaving] = React.useState(false);
   const [baselineError, setBaselineError] = React.useState('');
-  const [baselineForm, setBaselineForm] = React.useState({
+  const [mapleForm, setMapleForm] = React.useState({
     maple: '0',
     docena: '0',
     media_docena: '0',
   });
+  const [feedStockKg, setFeedStockKg] = React.useState('0');
+  const cutoffDate = todayLocalYmd();
 
   const load = React.useCallback(async () => {
     if (!organizationId) {
@@ -87,23 +91,35 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [load]);
 
-  const openBaselineModal = () => {
+  const openMapleBaseline = () => {
     const src = maples?.baseline?.byItem ?? maples?.byItem;
     const nonNeg = (n: number | undefined) => String(Math.max(0, Math.floor(Number(n) || 0)));
-    setBaselineForm({
+    setMapleForm({
       maple: nonNeg(src?.maple),
       docena: nonNeg(src?.docena),
       media_docena: nonNeg(src?.media_docena),
     });
     setBaselineError('');
-    setBaselineOpen(true);
+    setBaselineKind('maples');
   };
 
-  const handleSaveBaseline = async () => {
+  const openFeedBaseline = () => {
+    const src = feed?.baseline?.stockKg ?? Math.max(0, Number(feed?.stockKg) || 0);
+    setFeedStockKg(String(Number.isFinite(src) ? src : 0));
+    setBaselineError('');
+    setBaselineKind('feed');
+  };
+
+  const closeBaselineModal = () => {
+    if (baselineSaving) return;
+    setBaselineKind(null);
+  };
+
+  const handleSaveMapleBaseline = async () => {
     if (!organizationId) return;
-    const maple = parseInt(baselineForm.maple, 10);
-    const docena = parseInt(baselineForm.docena, 10);
-    const media_docena = parseInt(baselineForm.media_docena, 10);
+    const maple = parseInt(mapleForm.maple, 10);
+    const docena = parseInt(mapleForm.docena, 10);
+    const media_docena = parseInt(mapleForm.media_docena, 10);
     if (![maple, docena, media_docena].every((n) => Number.isFinite(n) && n >= 0)) {
       setBaselineError('Ingresá cantidades enteras mayores o iguales a 0.');
       return;
@@ -112,15 +128,39 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
     setBaselineError('');
     try {
       await inventoryStockService.savePackagingBaseline(organizationId, user?.id ?? null, {
-        baselineDate: todayLocalYmd(),
+        baselineDate: cutoffDate,
         maple,
         docena,
         media_docena,
       });
-      setBaselineOpen(false);
+      setBaselineKind(null);
       await load();
     } catch (e) {
       console.error('Error saving packaging baseline:', e);
+      setBaselineError(formatUnknownError(e, 'No se pudo guardar la apertura.'));
+    } finally {
+      setBaselineSaving(false);
+    }
+  };
+
+  const handleSaveFeedBaseline = async () => {
+    if (!organizationId) return;
+    const stockKg = parseFloat(feedStockKg);
+    if (!Number.isFinite(stockKg) || stockKg < 0) {
+      setBaselineError('Ingresá una cantidad de kg mayor o igual a 0.');
+      return;
+    }
+    setBaselineSaving(true);
+    setBaselineError('');
+    try {
+      await inventoryStockService.saveFeedBaseline(organizationId, user?.id ?? null, {
+        baselineDate: cutoffDate,
+        stockKg,
+      });
+      setBaselineKind(null);
+      await load();
+    } catch (e) {
+      console.error('Error saving feed baseline:', e);
       setBaselineError(formatUnknownError(e, 'No se pudo guardar la apertura.'));
     } finally {
       setBaselineSaving(false);
@@ -187,8 +227,17 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
               <span className="ml-2 text-base font-medium text-gray-500">kg</span>
             </p>
             <p className="text-xs text-gray-600 tabular-nums">
-              Compras {formatQty(feed?.purchasedKg ?? 0, 2)} kg − Consumo declarado{' '}
-              {formatQty(feed?.consumedKg ?? 0, 2)} kg
+              {feed?.baseline ? (
+                <>
+                  Línea base {formatQty(feed.baseline.stockKg, 2)} + Compras{' '}
+                  {formatQty(feed.purchasedKg, 2)} − Consumo {formatQty(feed.consumedKg, 2)} kg
+                </>
+              ) : (
+                <>
+                  Compras {formatQty(feed?.purchasedKg ?? 0, 2)} kg − Consumo declarado{' '}
+                  {formatQty(feed?.consumedKg ?? 0, 2)} kg
+                </>
+              )}
             </p>
             <p className="text-sm text-gray-700">
               {feed?.daysRemaining == null ? (
@@ -219,8 +268,13 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
               </p>
             ) : null}
             <p className="text-xs text-gray-500">
-              Entradas: compras en Gastos (Alimento). Salidas: consumo mensual declarado.
+              {feed?.baseline
+                ? `Línea base del ${formatBaselineDate(feed.baseline.baselineDate)} + compras − consumo.`
+                : 'Entradas: compras en Gastos (Alimento). Salidas: consumo mensual declarado.'}
             </p>
+            <Button type="button" variant="secondary" size="sm" onClick={openFeedBaseline}>
+              {feed?.baseline ? 'Actualizar stock inicial' : 'Declarar stock inicial'}
+            </Button>
           </Card>
 
           <Card className="flex flex-col gap-4">
@@ -253,7 +307,7 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
                 ? `Línea base del ${formatBaselineDate(maples.baseline.baselineDate)} + compras − ventas desde esa fecha.`
                 : 'Entradas: gastos Maples / Packaging con cantidad. Salidas: ventas por formato.'}
             </p>
-            <Button type="button" variant="secondary" size="sm" onClick={openBaselineModal}>
+            <Button type="button" variant="secondary" size="sm" onClick={openMapleBaseline}>
               {maples?.baseline ? 'Actualizar stock inicial' : 'Declarar stock inicial'}
             </Button>
           </Card>
@@ -261,14 +315,21 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
       )}
 
       <Modal
-        isOpen={baselineOpen}
-        onClose={() => !baselineSaving && setBaselineOpen(false)}
-        title={maples?.baseline ? 'Actualizar stock inicial de packaging' : 'Declarar stock inicial de packaging'}
+        isOpen={baselineKind === 'maples'}
+        onClose={closeBaselineModal}
+        title={
+          maples?.baseline
+            ? 'Actualizar stock inicial de packaging'
+            : 'Declarar stock inicial de packaging'
+        }
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
             Ingresá el stock físico que tenés hoy. Esto reemplaza el saldo histórico de packaging; de
             acá en más el inventario suma compras (Gastos) y resta ventas automáticamente.
+          </p>
+          <p className="text-sm text-gray-700">
+            Fecha de corte: <strong>{formatBaselineDate(cutoffDate)}</strong>
           </p>
           <div className="grid gap-3 sm:grid-cols-3">
             {mapleKeys.map((key) => (
@@ -278,8 +339,8 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
                 type="number"
                 min="0"
                 step="1"
-                value={baselineForm[key]}
-                onChange={(e) => setBaselineForm((prev) => ({ ...prev, [key]: e.target.value }))}
+                value={mapleForm[key]}
+                onChange={(e) => setMapleForm((prev) => ({ ...prev, [key]: e.target.value }))}
               />
             ))}
           </div>
@@ -289,15 +350,57 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
             </p>
           ) : null}
           <div className="flex flex-wrap justify-end gap-2 pt-2">
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={baselineSaving}
-              onClick={() => setBaselineOpen(false)}
-            >
+            <Button type="button" variant="secondary" disabled={baselineSaving} onClick={closeBaselineModal}>
               Cancelar
             </Button>
-            <Button type="button" disabled={baselineSaving} onClick={() => void handleSaveBaseline()}>
+            <Button
+              type="button"
+              disabled={baselineSaving}
+              onClick={() => void handleSaveMapleBaseline()}
+            >
+              {baselineSaving ? 'Guardando…' : 'Guardar apertura'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={baselineKind === 'feed'}
+        onClose={closeBaselineModal}
+        title={
+          feed?.baseline ? 'Actualizar stock inicial de alimento' : 'Declarar stock inicial de alimento'
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Ingresá los kg físicos que tenés hoy en depósito. Esto reemplaza el saldo histórico; de
+            acá en más el inventario suma compras (Gastos) y resta el consumo mensual declarado.
+          </p>
+          <p className="text-sm text-gray-700">
+            Fecha de corte: <strong>{formatBaselineDate(cutoffDate)}</strong>
+          </p>
+          <Input
+            label="Kg actuales en depósito"
+            type="number"
+            min="0"
+            step="0.01"
+            value={feedStockKg}
+            onChange={(e) => setFeedStockKg(e.target.value)}
+          />
+          {baselineError ? (
+            <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+              {baselineError}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" disabled={baselineSaving} onClick={closeBaselineModal}>
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={baselineSaving}
+              onClick={() => void handleSaveFeedBaseline()}
+            >
               {baselineSaving ? 'Guardando…' : 'Guardar apertura'}
             </Button>
           </div>

@@ -787,8 +787,9 @@ export default function Produccion({
                   </p>
                   {feedSnapshot != null ? (
                     <p className="mt-1 text-xs text-gray-500 tabular-nums">
-                      Compras {feedSnapshot.purchasedKg.toFixed(1)} − Consumo{' '}
-                      {feedSnapshot.consumedKg.toFixed(1)}
+                      {feedSnapshot.baseline
+                        ? `Base ${feedSnapshot.baseline.stockKg.toFixed(1)} + compras ${feedSnapshot.purchasedKg.toFixed(1)} − consumo ${feedSnapshot.consumedKg.toFixed(1)}`
+                        : `Compras ${feedSnapshot.purchasedKg.toFixed(1)} − Consumo ${feedSnapshot.consumedKg.toFixed(1)}`}
                     </p>
                   ) : null}
                 </div>

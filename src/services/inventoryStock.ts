@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import type {
   FeedConsumptionMonthly,
+  FeedStockBaseline,
   PackagingItemKey,
   PackagingStockBaseline,
   ProductionRecord,
@@ -11,6 +12,7 @@ import { gallinerosService } from './gallineros';
 import {
   computeEggStock,
   aggregateClosedMonthFeedRates,
+  computeFeedStockFromBaseline,
   computeFeedStockKg,
   computeMapleStock,
   computeMapleStockFromBaseline,
@@ -38,7 +40,9 @@ export {
   computeMapleStock,
   computeMapleStockFromBaseline,
   dateOnOrAfter,
+  yearMonthOnOrAfter,
   computeFeedStockKg,
+  computeFeedStockFromBaseline,
   aggregateClosedMonthFeedRates,
   averageGramsPerHenDayFromClosedMonths,
   sumDeclaredFeedConsumptionKg,
@@ -78,10 +82,15 @@ export interface MapleInventorySnapshot {
 
 export interface FeedInventorySnapshot {
   stockKg: number;
-  /** Suma de compras Alimento (Gastos). */
+  /** Compras en el período relevante (histórico o desde baseline). */
   purchasedKg: number;
-  /** Suma de consumo mensual declarado (sin doblecontar org + gallinero). */
+  /** Consumo declarado en el período relevante (sin doblecontar org + gallinero). */
   consumedKg: number;
+  /** Null = sin apertura; cálculo histórico completo (retrocompatible). */
+  baseline: {
+    baselineDate: string;
+    stockKg: number;
+  } | null;
   daysRemaining: number | null;
   /** g/ave/día usado para estimar días (historial plausible o default 117). */
   gramsPerHenDay: number;
@@ -119,19 +128,23 @@ function resolveExpenseKg(row: Record<string, unknown>): number {
   return resolveExpenseQuantityKg(row);
 }
 
-function isMissingBaselineTableError(error: { code?: string; message?: string } | null): boolean {
+function isMissingBaselineTableError(
+  error: { code?: string; message?: string } | null,
+  tableName: string
+): boolean {
   if (!error) return false;
   const code = String(error.code || '');
   const msg = String(error.message || '').toLowerCase();
+  const table = tableName.toLowerCase();
   return (
     code === '42P01' ||
     code === 'PGRST205' ||
-    (msg.includes('packaging_stock_baselines') &&
+    (msg.includes(table) &&
       (msg.includes('does not exist') || msg.includes('could not find') || msg.includes('schema cache')))
   );
 }
 
-function mapBaselineRow(row: Record<string, unknown>): PackagingStockBaseline {
+function mapPackagingBaselineRow(row: Record<string, unknown>): PackagingStockBaseline {
   return {
     id: row.id as string,
     organization_id: row.organization_id as string,
@@ -139,6 +152,18 @@ function mapBaselineRow(row: Record<string, unknown>): PackagingStockBaseline {
     maple: Math.max(0, Math.floor(Number(row.maple) || 0)),
     docena: Math.max(0, Math.floor(Number(row.docena) || 0)),
     media_docena: Math.max(0, Math.floor(Number(row.media_docena) || 0)),
+    created_by: (row.created_by as string | null) ?? null,
+    created_at: row.created_at as string,
+    updated_at: row.updated_at as string,
+  };
+}
+
+function mapFeedBaselineRow(row: Record<string, unknown>): FeedStockBaseline {
+  return {
+    id: row.id as string,
+    organization_id: row.organization_id as string,
+    baseline_date: String(row.baseline_date).slice(0, 10),
+    stock_kg: Math.max(0, Number(row.stock_kg) || 0),
     created_by: (row.created_by as string | null) ?? null,
     created_at: row.created_at as string,
     updated_at: row.updated_at as string,
@@ -186,14 +211,32 @@ async function fetchPackagingBaseline(
     .maybeSingle();
 
   if (error) {
-    if (isMissingBaselineTableError(error)) {
+    if (isMissingBaselineTableError(error, 'packaging_stock_baselines')) {
       console.warn('packaging_stock_baselines unavailable; using historic maple stock:', error.message);
       return null;
     }
     throw error;
   }
   if (!data) return null;
-  return mapBaselineRow(data as Record<string, unknown>);
+  return mapPackagingBaselineRow(data as Record<string, unknown>);
+}
+
+async function fetchFeedBaseline(organizationId: string): Promise<FeedStockBaseline | null> {
+  const { data, error } = await supabase
+    .from('feed_stock_baselines')
+    .select('id, organization_id, baseline_date, stock_kg, created_by, created_at, updated_at')
+    .eq('organization_id', organizationId)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingBaselineTableError(error, 'feed_stock_baselines')) {
+      console.warn('feed_stock_baselines unavailable; using historic feed stock:', error.message);
+      return null;
+    }
+    throw error;
+  }
+  if (!data) return null;
+  return mapFeedBaselineRow(data as Record<string, unknown>);
 }
 
 function sumPackagingPurchases(
@@ -333,18 +376,57 @@ export const inventoryStockService = {
       .single();
 
     if (error) {
-      if (isMissingBaselineTableError(error)) {
+      if (isMissingBaselineTableError(error, 'packaging_stock_baselines')) {
         throw new Error(
           'Falta aplicar la migración de apertura de packaging en la base de datos. Pedile a quien administra el proyecto que ejecute el SQL en Supabase.'
         );
       }
       throw error;
     }
-    return mapBaselineRow(data as Record<string, unknown>);
+    return mapPackagingBaselineRow(data as Record<string, unknown>);
+  },
+
+  /**
+   * Declara o actualiza la apertura de alimento (upsert por organización).
+   * Requiere que la migración feed_stock_baselines esté aplicada.
+   */
+  async saveFeedBaseline(
+    organizationId: string,
+    createdBy: string | null,
+    input: { baselineDate: string; stockKg: number }
+  ): Promise<FeedStockBaseline> {
+    const baseline_date = String(input.baselineDate).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(baseline_date)) {
+      throw new Error('Fecha de apertura inválida');
+    }
+    const stock_kg = Math.max(0, Number(input.stockKg) || 0);
+    const payload = {
+      organization_id: organizationId,
+      baseline_date,
+      stock_kg,
+      created_by: createdBy,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from('feed_stock_baselines')
+      .upsert(payload, { onConflict: 'organization_id' })
+      .select('id, organization_id, baseline_date, stock_kg, created_by, created_at, updated_at')
+      .single();
+
+    if (error) {
+      if (isMissingBaselineTableError(error, 'feed_stock_baselines')) {
+        throw new Error(
+          'Falta aplicar la migración de apertura de alimento en la base de datos. Pedile a quien administra el proyecto que ejecute el SQL en Supabase.'
+        );
+      }
+      throw error;
+    }
+    return mapFeedBaselineRow(data as Record<string, unknown>);
   },
 
   async loadFeedInventory(organizationId: string): Promise<FeedInventorySnapshot> {
-    const [expensesRes, consumptionRes, gallineros] = await Promise.all([
+    const [expensesRes, consumptionRes, gallineros, baseline] = await Promise.all([
       supabase
         .from('expenses')
         .select('expense_date, description, quantity_kg, quantity')
@@ -357,17 +439,26 @@ export const inventoryStockService = {
         )
         .eq('organization_id', organizationId),
       gallinerosService.getAll(organizationId),
+      fetchFeedBaseline(organizationId),
     ]);
     if (expensesRes.error) throw expensesRes.error;
     if (consumptionRes.error) throw consumptionRes.error;
 
-    let purchasedKg = 0;
-    for (const row of expensesRes.data || []) {
-      purchasedKg += resolveExpenseKg(row as Record<string, unknown>);
-    }
+    const expenseRows = (expensesRes.data || []) as Array<Record<string, unknown>>;
     const consumptions = mapConsumptions((consumptionRes.data || []) as Array<Record<string, unknown>>);
-    const consumedKg = sumDeclaredFeedConsumptionKg(consumptions);
-    const stockKg = computeFeedStockKg(purchasedKg, consumedKg);
+    const cutoff = baseline?.baseline_date ?? null;
+
+    let purchasedKg = 0;
+    for (const row of expenseRows) {
+      if (cutoff) {
+        const expenseDate = String(row.expense_date ?? '').slice(0, 10);
+        if (!expenseDate || !dateOnOrAfter(expenseDate, cutoff)) continue;
+      }
+      purchasedKg += resolveExpenseKg(row);
+    }
+    const consumedKg = sumDeclaredFeedConsumptionKg(consumptions, cutoff);
+    const baselineKg = baseline != null ? baseline.stock_kg : null;
+    const stockKg = computeFeedStockFromBaseline(purchasedKg, consumedKg, baselineKg);
     const activeHens = gallineros.reduce(
       (sum, g) => sum + Math.max(0, Math.floor(Number(g.current_count) || 0)),
       0
@@ -378,6 +469,9 @@ export const inventoryStockService = {
       stockKg,
       purchasedKg,
       consumedKg,
+      baseline: baseline
+        ? { baselineDate: baseline.baseline_date, stockKg: baseline.stock_kg }
+        : null,
       daysRemaining: estimate.daysRemaining,
       gramsPerHenDay: estimate.gramsPerHenDay,
       gramsSource: estimate.gramsSource,

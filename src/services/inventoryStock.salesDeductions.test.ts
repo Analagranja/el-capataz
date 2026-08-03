@@ -9,6 +9,7 @@ import {
   availableMapleStockForSale,
   computeEggStock,
   computeFeedStockKg,
+  computeFeedStockFromBaseline,
   computeMapleStock,
   computeMapleStockFromBaseline,
   dateOnOrAfter,
@@ -17,6 +18,7 @@ import {
   estimateFeedDaysRemaining,
   mapleImpactForSale,
   sumDeclaredFeedConsumptionKg,
+  yearMonthOnOrAfter,
   type MapleStockItemKey,
 } from './inventoryStockCalc';
 import type { FeedConsumptionMonthly, ProductionRecord, Sale, SaleType } from '../types';
@@ -428,6 +430,41 @@ check('consumo stock: sin org suma gallineros', () => {
     },
   ];
   assert.equal(sumDeclaredFeedConsumptionKg(rows), 350);
+});
+
+check('feed baseline: stock = base + compras − consumo desde corte', () => {
+  assert.equal(computeFeedStockFromBaseline(100, 40, 500), 560);
+  assert.equal(computeFeedStockFromBaseline(100, 40, null), 60);
+});
+
+check('feed consumo filtra por mes de baseline', () => {
+  const rows: FeedConsumptionMonthly[] = [
+    {
+      id: '1',
+      organization_id: 'org',
+      gallinero_id: null,
+      year: 2026,
+      month: 6,
+      kg_consumed: 300,
+      notes: null,
+      created_at: '2026-07-01T00:00:00.000Z',
+      updated_at: '2026-07-01T00:00:00.000Z',
+    },
+    {
+      id: '2',
+      organization_id: 'org',
+      gallinero_id: null,
+      year: 2026,
+      month: 8,
+      kg_consumed: 100,
+      notes: null,
+      created_at: '2026-09-01T00:00:00.000Z',
+      updated_at: '2026-09-01T00:00:00.000Z',
+    },
+  ];
+  assert.equal(sumDeclaredFeedConsumptionKg(rows, '2026-08-03'), 100);
+  assert.equal(yearMonthOnOrAfter(2026, 7, '2026-08-03'), false);
+  assert.equal(yearMonthOnOrAfter(2026, 8, '2026-08-03'), true);
 });
 
 console.log(`\n${passed} tests passed`);

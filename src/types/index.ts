@@ -161,6 +161,17 @@ export interface PackagingStockBaseline {
   updated_at: string;
 }
 
+/** Apertura de alimento: kg físicos declarados para resetear la línea base. */
+export interface FeedStockBaseline {
+  id: string;
+  organization_id: string;
+  baseline_date: string;
+  stock_kg: number;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface InventoryCount {
   id: string;
   organization_id: string;
