@@ -1,18 +1,33 @@
 import React from 'react';
-import { Customer, Sale } from '../types';
+import { Customer, Page, Sale } from '../types';
 import { salesService } from '../services/sales';
 import { customersService } from '../services/customers';
 import { useAuth } from '../contexts/AuthContext';
+import {
+  availableEggStockForSale,
+  availableMapleStockForSale,
+  eggImpactForSale,
+  EGG_STOCK_LABELS,
+  inventoryStockService,
+  MAPLE_STOCK_LABELS,
+} from '../services/inventoryStock';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
 import Modal from '../components/ui/Modal';
+import Toast from '../components/ui/Toast';
 import Table from '../components/ui/Table';
 import Badge from '../components/ui/Badge';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { formatArs } from '../utils/formatCurrency';
 import { todayLocalYmdParts } from '../utils/statsPeriod';
+import {
+  numberInputValue,
+  parseFormFloat,
+  parseFormInt,
+  safeFormNumber,
+} from '../utils/formNumbers';
 
 const SALE_TYPE_OPTIONS: Array<{ value: Sale['type']; label: string }> = [
   { value: 'maple', label: 'Maple (30 huevos)' },
@@ -44,7 +59,7 @@ const VENTAS_MONTH_OPTIONS = MONTH_NAMES.map((label, i) => ({
   label,
 }));
 
-export default function Ventas() {
+export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => void }) {
   const { organizationId } = useAuth();
   const [sales, setSales] = React.useState<Sale[]>([]);
   const [customers, setCustomers] = React.useState<Customer[]>([]);
@@ -57,6 +72,9 @@ export default function Ventas() {
   const [isQuickCustomerFormOpen, setIsQuickCustomerFormOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string>('');
+  const [eggStockWarning, setEggStockWarning] = React.useState<{ sizeLabel: string } | null>(null);
+  const [mapleToast, setMapleToast] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
   const [formData, setFormData] = React.useState({
     date: todayLocalYmdParts().ymd,
     customer_id: '',
@@ -113,11 +131,11 @@ export default function Ventas() {
     if (sale) {
       setEditingId(sale.id);
       setFormData({
-        date: sale.date,
+        date: String(sale.date || '').slice(0, 10) || todayLocalYmdParts().ymd,
         customer_id: sale.customer_id || '',
         type: sale.type,
-        quantity: sale.quantity,
-        price_per_unit: sale.price_per_unit,
+        quantity: safeFormNumber(sale.quantity, 0),
+        price_per_unit: safeFormNumber(sale.price_per_unit, 0),
         notes: sale.notes || '',
       });
     } else {
@@ -140,6 +158,7 @@ export default function Ventas() {
     setEditingId(null);
     setIsQuickCustomerFormOpen(false);
     setError('');
+    setEggStockWarning(null);
   };
 
   const handleQuickCreateCustomer = async () => {
@@ -161,10 +180,10 @@ export default function Ventas() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
+  const persistSale = async () => {
     if (!organizationId || !formData.customer_id) return;
+    setSaving(true);
+    setError('');
     try {
       if (editingId) {
         await salesService.update(
@@ -196,7 +215,78 @@ export default function Ventas() {
         (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string' ? err.message : '') ||
         'No se pudo guardar la venta.';
       setError(msg);
+    } finally {
+      setSaving(false);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (!organizationId || !formData.customer_id) return;
+
+    const editingSale = editingId ? sales.find((s) => s.id === editingId) ?? null : null;
+
+    try {
+      // Validaciones aditivas (no cambian el guardado): huevos modal + maples toast.
+      const [eggInv, mapleInv] = await Promise.all([
+        inventoryStockService.loadEggInventory(organizationId),
+        inventoryStockService.loadMapleInventory(organizationId),
+      ]);
+
+      const eggImpact = eggImpactForSale(formData.type, formData.quantity);
+      const eggAvailable = availableEggStockForSale(
+        eggInv.bySize,
+        formData.type,
+        formData.quantity,
+        editingSale
+      );
+      if (eggImpact.eggs > 0 && eggAvailable < eggImpact.eggs) {
+        setEggStockWarning({ sizeLabel: EGG_STOCK_LABELS[eggImpact.key] });
+        return;
+      }
+
+      const mapleCheck = availableMapleStockForSale(
+        mapleInv.byItem,
+        formData.type,
+        formData.quantity,
+        editingSale
+      );
+      if (mapleCheck && mapleCheck.needed > 0 && mapleCheck.available < mapleCheck.needed) {
+        setMapleToast(
+          `Atención: no queda stock suficiente de ${MAPLE_STOCK_LABELS[mapleCheck.key]} registrado. Recordá reponer packaging.`
+        );
+      }
+
+      await persistSale();
+    } catch (err) {
+      console.error('Error checking inventory before sale:', err);
+      // Si falla el chequeo, no bloquear: guardar igual (flujo productivo).
+      await persistSale();
+    }
+  };
+
+  const handleEggWarningContinue = async () => {
+    setEggStockWarning(null);
+    if (!organizationId) return;
+    try {
+      const mapleInv = await inventoryStockService.loadMapleInventory(organizationId);
+      const editingSale = editingId ? sales.find((s) => s.id === editingId) ?? null : null;
+      const mapleCheck = availableMapleStockForSale(
+        mapleInv.byItem,
+        formData.type,
+        formData.quantity,
+        editingSale
+      );
+      if (mapleCheck && mapleCheck.needed > 0 && mapleCheck.available < mapleCheck.needed) {
+        setMapleToast(
+          `Atención: no queda stock suficiente de ${MAPLE_STOCK_LABELS[mapleCheck.key]} registrado. Recordá reponer packaging.`
+        );
+      }
+    } catch {
+      /* ignore */
+    }
+    await persistSale();
   };
 
   const handleDelete = async (id: string) => {
@@ -443,23 +533,33 @@ export default function Ventas() {
           <Input
             label="Cantidad de Unidades"
             type="number"
-            value={formData.quantity}
-            onChange={(e) => setFormData({ ...formData, quantity: parseInt(e.target.value) })}
+            min="0"
+            step="1"
+            value={numberInputValue(formData.quantity)}
+            onChange={(e) =>
+              setFormData({ ...formData, quantity: parseFormInt(e.target.value, 0) })
+            }
             required
           />
 
           <Input
             label="Precio por Unidad"
             type="number"
+            min="0"
             step="0.01"
-            value={formData.price_per_unit}
-            onChange={(e) => setFormData({ ...formData, price_per_unit: parseFloat(e.target.value) })}
+            value={numberInputValue(formData.price_per_unit)}
+            onChange={(e) =>
+              setFormData({ ...formData, price_per_unit: parseFormFloat(e.target.value, 0) })
+            }
             required
           />
 
           <div className="p-3 bg-blue-50 rounded-lg">
             <p className="text-sm text-gray-600">
-              Total: {formatArs(formData.quantity * formData.price_per_unit)}
+              Total:{' '}
+              {formatArs(
+                safeFormNumber(formData.quantity) * safeFormNumber(formData.price_per_unit)
+              )}
             </p>
           </div>
 
@@ -471,15 +571,55 @@ export default function Ventas() {
           />
 
           <div className="flex gap-2 pt-4">
-            <Button variant="primary" type="submit" className="flex-1">
-              Guardar
+            <Button variant="primary" type="submit" className="flex-1" disabled={saving}>
+              {saving ? 'Guardando…' : 'Guardar'}
             </Button>
-            <Button variant="secondary" onClick={handleCloseModal} className="flex-1">
+            <Button variant="secondary" onClick={handleCloseModal} className="flex-1" type="button">
               Cancelar
             </Button>
           </div>
         </form>
       </Modal>
+
+      <Modal
+        isOpen={eggStockWarning != null}
+        onClose={() => setEggStockWarning(null)}
+        title="Stock de huevos insuficiente"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-700">
+            No hay suficiente stock de huevos {eggStockWarning?.sizeLabel}. ¿Te olvidaste de cargar la
+            producción de hoy?
+          </p>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button
+              type="button"
+              variant="primary"
+              className="flex-1"
+              onClick={() => {
+                setEggStockWarning(null);
+                handleCloseModal();
+                onNavigate?.('produccion');
+              }}
+            >
+              Cargar producción
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              className="flex-1"
+              onClick={() => void handleEggWarningContinue()}
+              disabled={saving}
+            >
+              Guardar de todas formas
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {mapleToast ? (
+        <Toast message={mapleToast} onDismiss={() => setMapleToast(null)} />
+      ) : null}
     </div>
   );
 }

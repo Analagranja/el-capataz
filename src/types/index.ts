@@ -146,6 +146,21 @@ export interface Expense {
   created_at: string;
 }
 
+export type InventoryCategory = 'eggs' | 'feed' | 'maples';
+
+export interface InventoryCount {
+  id: string;
+  organization_id: string;
+  category: InventoryCategory;
+  item_key: string;
+  counted_amount: number;
+  theoretical_amount: number;
+  difference: number;
+  counted_at: string;
+  created_by?: string | null;
+  created_at: string;
+}
+
 export type FeedLogTipo = 'bolsas' | 'granel';
 
 export interface FeedLog {
@@ -185,6 +200,7 @@ export type Page =
   | 'ventas'
   | 'clientes'
   | 'gastos'
+  | 'inventario'
   | 'eventos'
   | 'estadisticas'
   | 'configuracion';

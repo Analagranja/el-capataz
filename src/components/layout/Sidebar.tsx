@@ -11,6 +11,7 @@ import {
   X,
   LogOut,
   Wallet,
+  ClipboardList,
   Settings,
 } from 'lucide-react';
 import { Page, type UserRole } from '../../types';
@@ -55,6 +56,7 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
     { id: 'ventas', label: 'Ventas', icon: ShoppingCart },
     { id: 'clientes', label: 'Clientes', icon: Contact },
     { id: 'gastos', label: 'Gastos', icon: Wallet },
+    { id: 'inventario', label: 'Inventario (Beta)', icon: ClipboardList },
     { id: 'eventos', label: 'Eventos', icon: AlertCircle },
     { id: 'estadisticas', label: 'Estadísticas', icon: BarChart3 },
     { id: 'configuracion', label: 'Configuración', icon: Settings },

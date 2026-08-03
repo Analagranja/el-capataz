@@ -12,6 +12,7 @@ import { formatArs } from '../utils/formatCurrency';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
+import FeedConsumptionMissingReminder from '../components/FeedConsumptionMissingReminder';
 
 const EGGS_PER_SALE_TYPE: Record<SaleType, number> = {
   maple: 30,
@@ -27,6 +28,7 @@ const STOCK_Umbral_KEY = 'stock_umbral_alerta';
 
 interface DashboardProps {
   selectedGallineroId: string | null;
+  onNavigateToFeedConsumption?: (target: { year: number; month: number }) => void;
 }
 
 const SANIDAD_TYPE_LABEL: Partial<Record<EventType, string>> = {
@@ -74,7 +76,10 @@ function dashboardRole(raw: unknown): 'admin' | 'operator' | 'vendedor' {
   return 'admin';
 }
 
-export default function Dashboard({ selectedGallineroId: _selectedGallineroId }: DashboardProps) {
+export default function Dashboard({
+  selectedGallineroId: _selectedGallineroId,
+  onNavigateToFeedConsumption,
+}: DashboardProps) {
   const { organizationId, role: profileRole } = useAuth();
   const userRole = dashboardRole(profileRole);
   const showGananciaDelMes = userRole === 'admin';
@@ -250,6 +255,10 @@ export default function Dashboard({ selectedGallineroId: _selectedGallineroId }:
           Resumen rápido de tu granja
         </p>
       </header>
+
+      {onNavigateToFeedConsumption ? (
+        <FeedConsumptionMissingReminder onGoToDeclare={onNavigateToFeedConsumption} />
+      ) : null}
 
       <Card
         padding="none"

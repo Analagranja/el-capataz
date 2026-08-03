@@ -1,8 +1,13 @@
 import React from 'react';
-import { Gallinero, ProductionRecord } from '../types';
+import { Gallinero, Page, ProductionRecord } from '../types';
 import { gallinerosService } from '../services/gallineros';
 import { productionService, productionFormDateToDbDate, computeLayingPercentage } from '../services/production';
 import { feedLogsService } from '../services/feedLogs';
+import {
+  inventoryStockService,
+  type FeedInventorySnapshot,
+} from '../services/inventoryStock';
+import { formatFeedReachFromToday, formatUnknownError } from '../services/inventoryStockCalc';
 import { useAuth } from '../contexts/AuthContext';
 import { useRole } from '../hooks/useRole';
 import { useBumpDashboardMetrics } from '../contexts/DashboardMetricsRefreshContext';
@@ -12,12 +17,32 @@ import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
 import Modal from '../components/ui/Modal';
 import Table from '../components/ui/Table';
-import { Plus, Pencil, Trash2, Package } from 'lucide-react';
+import { Plus, Pencil, Trash2, Wallet } from 'lucide-react';
 import { todayLocalYmd } from '../utils/monthToDateFinance';
+import { numberInputValue, parseFormFloat, parseFormInt } from '../utils/formNumbers';
 import { distributeFeedKgByGallinero } from '../utils/distributeFeedKg';
+import DeclareMonthlyFeedModal from '../components/DeclareMonthlyFeedModal';
 
-interface Produccion {
+const MONTH_LABELS = [
+  'Enero',
+  'Febrero',
+  'Marzo',
+  'Abril',
+  'Mayo',
+  'Junio',
+  'Julio',
+  'Agosto',
+  'Septiembre',
+  'Octubre',
+  'Noviembre',
+  'Diciembre',
+];
+
+interface ProduccionProps {
   selectedGallineroId: string | null;
+  onNavigate?: (page: Page) => void;
+  consumptionFocus?: { year: number; month: number; openMonthlyModal?: boolean } | null;
+  onConsumptionFocusConsumed?: () => void;
 }
 
 function toDateInputValue(raw: string): string {
@@ -34,15 +59,22 @@ function getSavedKgPorBolsa(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 25;
 }
 
-export default function Produccion({ selectedGallineroId }: Produccion) {
+export default function Produccion({
+  selectedGallineroId,
+  onNavigate,
+  consumptionFocus,
+  onConsumptionFocusConsumed,
+}: ProduccionProps) {
   const { organizationId } = useAuth();
   const { canLogProduction } = useRole();
   const bumpDashboardMetrics = useBumpDashboardMetrics();
   const [gallineros, setGallineros] = React.useState<Gallinero[]>([]);
   const [production, setProduction] = React.useState<ProductionRecord[]>([]);
+  const [feedSnapshot, setFeedSnapshot] = React.useState<FeedInventorySnapshot | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [isFeedLogModalOpen, setIsFeedLogModalOpen] = React.useState(false);
+  const [feedStockWarning, setFeedStockWarning] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [currentGallineroId, setCurrentGallineroId] = React.useState(selectedGallineroId);
   const [error, setError] = React.useState<string>('');
@@ -59,6 +91,13 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
   const [feedGallineroTarget, setFeedGallineroTarget] = React.useState<string>('all');
   const [feedLogSaving, setFeedLogSaving] = React.useState(false);
   const [feedLogError, setFeedLogError] = React.useState('');
+  const [feedLogSuccess, setFeedLogSuccess] = React.useState('');
+  const [isMonthlyFeedModalOpen, setIsMonthlyFeedModalOpen] = React.useState(false);
+  const [monthlyFeedFocus, setMonthlyFeedFocus] = React.useState<{
+    year?: number;
+    month?: number;
+  } | null>(null);
+  const [monthlyFeedSuccess, setMonthlyFeedSuccess] = React.useState('');
   const [clasificarPorTamano, setClasificarPorTamano] = React.useState(false);
   const [formData, setFormData] = React.useState({
     gallinero_id: selectedGallineroId || '',
@@ -111,9 +150,43 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
     }
   };
 
+  const loadFeedSnapshot = React.useCallback(async () => {
+    if (!organizationId) {
+      setFeedSnapshot(null);
+      return;
+    }
+    try {
+      const feed = await inventoryStockService.loadFeedInventory(organizationId);
+      setFeedSnapshot(feed);
+    } catch (error) {
+      console.error('Error loading feed snapshot:', error);
+      setFeedSnapshot(null);
+    }
+  }, [organizationId]);
+
   React.useEffect(() => {
     loadGallineros();
   }, [organizationId]);
+
+  React.useEffect(() => {
+    loadFeedSnapshot();
+  }, [loadFeedSnapshot]);
+
+  React.useEffect(() => {
+    if (!consumptionFocus) return;
+    const y = Number(consumptionFocus.year);
+    const m = Number(consumptionFocus.month);
+    if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) {
+      onConsumptionFocusConsumed?.();
+      return;
+    }
+    if (consumptionFocus.openMonthlyModal) {
+      setMonthlyFeedSuccess('');
+      setMonthlyFeedFocus({ year: y, month: m });
+      setIsMonthlyFeedModalOpen(true);
+    }
+    onConsumptionFocusConsumed?.();
+  }, [consumptionFocus, onConsumptionFocusConsumed]);
 
   React.useEffect(() => {
     if (selectedGallineroId) {
@@ -196,6 +269,7 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
 
   const openFeedLogModal = () => {
     setFeedLogError('');
+    setFeedLogSuccess('');
     resetFeedConsumoForm();
     setFeedGallineroTarget(currentGallineroId ?? 'all');
     setIsFeedLogModalOpen(true);
@@ -222,14 +296,22 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
   const handleCloseFeedLogModal = () => {
     setIsFeedLogModalOpen(false);
     setFeedLogError('');
+    setFeedStockWarning(false);
     resetFeedConsumoForm();
   };
 
-  const handleSaveFeedLog = async () => {
-    if (!canLogProduction() || !organizationId) return;
+  const persistFeedLog = async (): Promise<boolean> => {
+    if (!canLogProduction()) {
+      setFeedLogError('No tenés permiso para registrar consumo.');
+      return false;
+    }
+    if (!organizationId) {
+      setFeedLogError('Sesión no válida. Volvé a iniciar sesión e intentá de nuevo.');
+      return false;
+    }
     if (!isFeedConsumoFormValid) {
       setFeedLogError('Completá todos los campos obligatorios.');
-      return;
+      return false;
     }
     const totalKg =
       feedConsumoTipo === 'bolsas'
@@ -237,10 +319,11 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
         : Math.max(0, feedKgGranel);
     if (!Number.isFinite(totalKg) || totalKg <= 0) {
       setFeedLogError('Revisá los kg ingresados.');
-      return;
+      return false;
     }
     try {
       setFeedLogSaving(true);
+      setFeedLogError('');
       const logDate = feedLogDate.trim().slice(0, 10);
       const metaBolsas =
         feedConsumoTipo === 'bolsas'
@@ -255,11 +338,19 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
         const shares = distributeFeedKgByGallinero(totalKg, gallineros);
         if (shares.length === 0) {
           setFeedLogError('No hay gallineros con gallinas para distribuir el consumo.');
-          return;
+          return false;
         }
         await Promise.all(
           shares.map(({ gallineroId, kg }) =>
-            feedLogsService.create(organizationId, gallineroId, logDate, kg, { tipo: 'granel' })
+            feedLogsService.create(organizationId, gallineroId, logDate, kg, {
+              tipo: feedConsumoTipo,
+              ...(feedConsumoTipo === 'bolsas'
+                ? {
+                    cantidad_bolsas: Math.floor(feedCantidadBolsas),
+                    kg_por_bolsa: feedKgPorBolsa,
+                  }
+                : {}),
+            })
           )
         );
         if (feedConsumoTipo === 'bolsas' && typeof window !== 'undefined') {
@@ -273,14 +364,74 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
       } else {
         await feedLogsService.create(organizationId, feedGallineroTarget, logDate, totalKg, metaBolsas);
       }
+
+      const gallineroLabel =
+        feedGallineroTarget === 'all'
+          ? 'toda la granja'
+          : gallineros.find((g) => g.id === feedGallineroTarget)?.name || 'el gallinero';
       bumpDashboardMetrics();
+      setFeedStockWarning(false);
+      await loadFeedSnapshot();
       handleCloseFeedLogModal();
+      setFeedLogSuccess(
+        `Consumo diario de ${totalKg.toFixed(1)} kg registrado en ${gallineroLabel} (${logDate}).`
+      );
+      return true;
     } catch (error) {
       console.error('Error saving feed log:', error);
-      setFeedLogError('No se pudo guardar el consumo de alimento.');
+      setFeedLogError(
+        formatUnknownError(
+          error,
+          'No se pudo guardar el consumo de alimento. Revisá la conexión e intentá de nuevo.'
+        )
+      );
+      return false;
     } finally {
       setFeedLogSaving(false);
     }
+  };
+
+  const handleSaveFeedLog = async () => {
+    if (!canLogProduction()) {
+      setFeedLogError('No tenés permiso para registrar consumo.');
+      return;
+    }
+    if (!organizationId) {
+      setFeedLogError('Sesión no válida. Volvé a iniciar sesión e intentá de nuevo.');
+      return;
+    }
+    if (!isFeedConsumoFormValid) {
+      setFeedLogError('Completá todos los campos obligatorios.');
+      return;
+    }
+    const totalKg =
+      feedConsumoTipo === 'bolsas'
+        ? Math.max(0, Math.floor(feedCantidadBolsas)) * Math.max(0, feedKgPorBolsa)
+        : Math.max(0, feedKgGranel);
+    if (!Number.isFinite(totalKg) || totalKg <= 0) {
+      setFeedLogError('Revisá los kg ingresados.');
+      return;
+    }
+
+    setFeedLogSaving(true);
+    setFeedLogError('');
+    try {
+      const feedInv = await inventoryStockService.loadFeedInventory(organizationId);
+      // Tolerancia mínima por redondeo; igual al stock disponible no debe advertir.
+      if (feedInv.stockKg <= 0 || totalKg > feedInv.stockKg + 0.001) {
+        setFeedStockWarning(true);
+        setFeedLogError(
+          `Stock disponible: ${feedInv.stockKg.toFixed(1)} kg. Este consumo pide ${totalKg.toFixed(1)} kg.`
+        );
+        setFeedLogSaving(false);
+        return;
+      }
+    } catch (error) {
+      console.error('Error checking feed stock before log:', error);
+      // Si falla el chequeo de stock, no bloquear el registro operativo.
+    }
+
+    await persistFeedLog();
   };
 
   const findExistingRecordForDate = async (gallineroId: string, date: string) => {
@@ -361,6 +512,8 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
       const eggsLarge = clasificarPorTamano ? formData.eggs_large || 0 : null;
       const eggsMedium = clasificarPorTamano ? formData.eggs_medium || 0 : null;
       const eggsSmall = clasificarPorTamano ? formData.eggs_small || 0 : null;
+      // Optional field: empty/untouched → 0 (matches NOT NULL DEFAULT 0)
+      const brokenDirtyEggsCount = formData.broken_dirty_eggs_count || 0;
 
       if (editingId) {
         await productionService.update(
@@ -368,7 +521,7 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
           editingId,
           dateYmd,
           formData.eggs_count,
-          formData.broken_dirty_eggs_count,
+          brokenDirtyEggsCount,
           formData.poultry_count,
           formData.notes,
           eggsLarge,
@@ -381,7 +534,7 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
           formData.gallinero_id,
           dateYmd,
           formData.eggs_count,
-          formData.broken_dirty_eggs_count,
+          brokenDirtyEggsCount,
           gallinero.current_count,
           formData.notes,
           eggsLarge,
@@ -462,11 +615,19 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
         <div className="flex flex-wrap gap-2">
           {canLogProduction() ? (
             <>
-              <Button variant="secondary" onClick={openFeedLogModal}>
-                <Package size={18} />
-                Registrar Consumo
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={() => {
+                  setMonthlyFeedSuccess('');
+                  setMonthlyFeedFocus(null);
+                  setIsMonthlyFeedModalOpen(true);
+                }}
+              >
+                <Wallet size={18} />
+                Declarar consumo del mes
               </Button>
-              <Button variant="primary" onClick={() => handleOpenModal()}>
+              <Button variant="primary" type="button" onClick={() => handleOpenModal()}>
                 <Plus size={20} />
                 Nueva Recolección
               </Button>
@@ -476,6 +637,17 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
           )}
         </div>
       </div>
+      {canLogProduction() ? (
+        <p className="text-xs text-gray-500 -mt-4">
+          <button
+            type="button"
+            className="underline hover:text-gray-700"
+            onClick={openFeedLogModal}
+          >
+            Registro diario avanzado (opcional)
+          </button>
+        </p>
+      ) : null}
 
       {gallineros.length > 0 && (
         <Card padding="md">
@@ -520,6 +692,36 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
 
       {(currentGallineroId !== undefined) && (
         <>
+          {monthlyFeedSuccess ? (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+              <div className="flex items-start justify-between gap-3">
+                <p>{monthlyFeedSuccess}</p>
+                <button
+                  type="button"
+                  className="shrink-0 text-emerald-700 underline"
+                  onClick={() => setMonthlyFeedSuccess('')}
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {feedLogSuccess ? (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+              <div className="flex items-start justify-between gap-3">
+                <p>{feedLogSuccess}</p>
+                <button
+                  type="button"
+                  className="shrink-0 text-emerald-700 underline"
+                  onClick={() => setFeedLogSuccess('')}
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           {production.length > 0 && (
             <Card padding="md">
               <div className="space-y-4">
@@ -546,6 +748,96 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
             </Card>
           )}
 
+          <Card padding="md">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="grid flex-1 grid-cols-1 gap-4 sm:grid-cols-3">
+                <div>
+                  <p className="text-sm text-gray-600 mb-1">Consumo (g/ave/día)</p>
+                  {feedSnapshot?.lastClosedMonth ? (
+                    <>
+                      <p className="text-2xl font-bold text-gray-900 tabular-nums">
+                        {feedSnapshot.lastClosedMonth.gramsPerHenDay.toFixed(1)}
+                        <span className="ml-1 text-base font-medium text-gray-500">g</span>
+                      </p>
+                      <p className="mt-1 text-xs text-gray-500">
+                        {MONTH_LABELS[feedSnapshot.lastClosedMonth.month - 1]}{' '}
+                        {feedSnapshot.lastClosedMonth.year}
+                        {' · '}
+                        {feedSnapshot.lastClosedMonth.kgConsumed.toFixed(0)} kg declarados
+                        {' · '}
+                        {feedSnapshot.lastClosedMonth.hens} aves
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-2xl font-bold text-gray-400">—</p>
+                      <p className="mt-1 text-xs text-gray-500">
+                        Sin declaración en meses cerrados
+                      </p>
+                    </>
+                  )}
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600 mb-1">Stock alimento</p>
+                  <p className="text-2xl font-bold text-gray-900 tabular-nums">
+                    {feedSnapshot != null ? feedSnapshot.stockKg.toFixed(1) : '—'}
+                    {feedSnapshot != null ? (
+                      <span className="ml-1 text-base font-medium text-gray-500">kg</span>
+                    ) : null}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600 mb-1">Alcance (desde hoy)</p>
+                  {feedSnapshot?.daysRemaining == null ? (
+                    <p className="text-2xl font-bold text-gray-400">
+                      {feedSnapshot?.activeHens === 0 ? 'Sin aves' : '—'}
+                    </p>
+                  ) : (
+                    (() => {
+                      const { daysLabel, untilLabel } = formatFeedReachFromToday(
+                        feedSnapshot.daysRemaining
+                      );
+                      return (
+                        <>
+                          <p className="text-2xl font-bold text-gray-900 tabular-nums">
+                            ~{daysLabel}
+                            <span className="ml-1 text-base font-medium text-gray-500">días</span>
+                          </p>
+                          <p className="mt-1 text-xs text-gray-500">
+                            Con el stock de hoy · hasta el {untilLabel} aprox.
+                            {feedSnapshot.gramsPerHenDay > 0
+                              ? ` · base ${feedSnapshot.gramsPerHenDay.toFixed(0)} g/ave/día${
+                                  feedSnapshot.gramsSource === 'default'
+                                    ? ' (referencia)'
+                                    : ''
+                                }`
+                              : ''}
+                          </p>
+                        </>
+                      );
+                    })()
+                  )}
+                </div>
+              </div>
+              {canLogProduction() && (
+                <div className="shrink-0 sm:pt-1">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    type="button"
+                    onClick={() => {
+                      setMonthlyFeedSuccess('');
+                      setMonthlyFeedFocus(null);
+                      setIsMonthlyFeedModalOpen(true);
+                    }}
+                  >
+                    Declarar consumo del mes
+                  </Button>
+                </div>
+              )}
+            </div>
+          </Card>
+
           <Card padding="none">
             <Table
               columns={[
@@ -560,6 +852,15 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
                       },
                     ]),
                 { key: 'eggs_count', label: 'Huevos' },
+                {
+                  key: 'broken_dirty_eggs_count',
+                  label: 'Huevos Rotos/Sucios',
+                  render: (value: unknown) => {
+                    if (value == null || !Number.isFinite(Number(value))) return '—';
+                    const n = Math.floor(Number(value));
+                    return n > 0 ? String(n) : '—';
+                  },
+                },
                 {
                   key: 'laying_percentage',
                   label: '% Postura',
@@ -659,8 +960,8 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
           <Input
             label="Cantidad de Huevos"
             type="number"
-            value={formData.eggs_count}
-            onChange={(e) => setFormData({ ...formData, eggs_count: parseInt(e.target.value) || 0 })}
+            value={numberInputValue(formData.eggs_count)}
+            onChange={(e) => setFormData({ ...formData, eggs_count: parseFormInt(e.target.value, 0) })}
             required
             disabled={clasificarPorTamano}
           />
@@ -693,7 +994,7 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
               <Input
                 label="Grandes"
                 type="number"
-                value={formData.eggs_large || 0}
+                value={numberInputValue(formData.eggs_large || 0)}
                 onChange={(e) => {
                   const large = parseInt(e.target.value) || 0;
                   setFormData((prev) => ({
@@ -706,7 +1007,7 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
               <Input
                 label="Medianos"
                 type="number"
-                value={formData.eggs_medium || 0}
+                value={numberInputValue(formData.eggs_medium || 0)}
                 onChange={(e) => {
                   const medium = parseInt(e.target.value) || 0;
                   setFormData((prev) => ({
@@ -719,7 +1020,7 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
               <Input
                 label="Chicos"
                 type="number"
-                value={formData.eggs_small || 0}
+                value={numberInputValue(formData.eggs_small || 0)}
                 onChange={(e) => {
                   const small = parseInt(e.target.value) || 0;
                   setFormData((prev) => ({
@@ -748,14 +1049,15 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
           <Input
             label="Cantidad de Huevos Rotos/Sucios"
             type="number"
-            value={formData.broken_dirty_eggs_count}
+            value={numberInputValue(formData.broken_dirty_eggs_count)}
             onChange={(e) =>
               setFormData({
                 ...formData,
-                broken_dirty_eggs_count: parseInt(e.target.value) || 0,
+                broken_dirty_eggs_count: parseFormInt(e.target.value, 0),
               })
             }
-            required
+            min="0"
+            placeholder="0 (opcional)"
           />
 
           <Input
@@ -776,8 +1078,12 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
         </form>
       </Modal>
 
-      <Modal isOpen={isFeedLogModalOpen} onClose={handleCloseFeedLogModal} title="Registrar consumo de alimento">
+      <Modal isOpen={isFeedLogModalOpen} onClose={handleCloseFeedLogModal} title="Registro diario avanzado">
         <div className="space-y-4">
+          <p className="text-xs text-gray-500">
+            Uso opcional: apertura diaria de alimento. Para el stock y los días restantes usá
+            “Declarar consumo del mes”.
+          </p>
           <Select
             label="Gallinero"
             options={feedGallineroSelectOptions}
@@ -813,8 +1119,8 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
                 step="1"
                 min="1"
                 inputMode="numeric"
-                value={feedCantidadBolsas || ''}
-                onChange={(e) => setFeedCantidadBolsas(parseInt(e.target.value, 10) || 0)}
+                value={numberInputValue(feedCantidadBolsas)}
+                onChange={(e) => setFeedCantidadBolsas(parseFormInt(e.target.value, 0))}
                 required
               />
               <Input
@@ -822,8 +1128,8 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
                 type="number"
                 step="0.01"
                 min="0"
-                value={feedKgPorBolsa}
-                onChange={(e) => setFeedKgPorBolsa(parseFloat(e.target.value) || 0)}
+                value={numberInputValue(feedKgPorBolsa)}
+                onChange={(e) => setFeedKgPorBolsa(parseFormFloat(e.target.value, 0))}
                 helperText="Se recuerda el último valor para la próxima vez."
                 required
               />
@@ -841,8 +1147,8 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
               type="number"
               step="0.01"
               min="0"
-              value={feedKgGranel}
-              onChange={(e) => setFeedKgGranel(parseFloat(e.target.value) || 0)}
+              value={numberInputValue(feedKgGranel)}
+              onChange={(e) => setFeedKgGranel(parseFormFloat(e.target.value, 0))}
               required
             />
           )}
@@ -863,18 +1169,93 @@ export default function Produccion({ selectedGallineroId }: Produccion) {
           <div className="flex gap-2 pt-2">
             <Button
               variant="primary"
-              onClick={handleSaveFeedLog}
+              type="button"
+              onClick={() => void handleSaveFeedLog()}
               className="flex-1"
               disabled={feedLogSaving || !isFeedConsumoFormValid}
             >
               {feedLogSaving ? 'Guardando…' : 'Guardar'}
             </Button>
-            <Button variant="secondary" onClick={handleCloseFeedLogModal} className="flex-1" disabled={feedLogSaving}>
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={handleCloseFeedLogModal}
+              className="flex-1"
+              disabled={feedLogSaving}
+            >
               Cancelar
             </Button>
           </div>
         </div>
       </Modal>
+
+      <Modal
+        isOpen={feedStockWarning}
+        onClose={() => setFeedStockWarning(false)}
+        title="Alimento insuficiente"
+        overlayClassName="z-[60]"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-700">
+            No hay alimento suficiente en stock. ¿Te olvidaste de cargar la compra?
+          </p>
+          {feedLogError ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              {feedLogError}
+            </div>
+          ) : null}
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button
+              type="button"
+              variant="primary"
+              className="flex-1"
+              onClick={() => {
+                setFeedStockWarning(false);
+                handleCloseFeedLogModal();
+                onNavigate?.('gastos');
+              }}
+            >
+              Cargar compra de alimento
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              className="flex-1"
+              onClick={() => void persistFeedLog()}
+              disabled={feedLogSaving}
+            >
+              Guardar de todas formas
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {organizationId ? (
+        <DeclareMonthlyFeedModal
+          isOpen={isMonthlyFeedModalOpen}
+          onClose={() => {
+            setIsMonthlyFeedModalOpen(false);
+            setMonthlyFeedFocus(null);
+          }}
+          organizationId={organizationId}
+          activeHens={gallineros.reduce(
+            (sum, g) => sum + Math.max(0, Math.floor(Number(g.current_count) || 0)),
+            0
+          )}
+          initialYear={monthlyFeedFocus?.year}
+          initialMonth={monthlyFeedFocus?.month}
+          onSaved={async (saved) => {
+            await loadFeedSnapshot();
+            bumpDashboardMetrics();
+            const label = `${MONTH_LABELS[saved.month - 1]} ${saved.year}`;
+            setMonthlyFeedSuccess(
+              `Consumo de ${label} guardado: ${Number(saved.kg_consumed).toFixed(1)} kg. ` +
+                'Stock, g/ave/día y días restantes actualizados en esta pantalla.'
+            );
+            setFeedLogSuccess('');
+          }}
+        />
+      ) : null}
     </div>
   );
 }

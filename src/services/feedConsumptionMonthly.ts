@@ -73,6 +73,14 @@ export const feedConsumptionMonthlyService = {
     return toFeedConsumptionMonthly(data as FeedConsumptionMonthlyRow);
   },
 
+  /** Declaraciones de uno o más años (toda la org, todos los gallineros). */
+  async getAllByYears(organizationId: string, years: number[]): Promise<FeedConsumptionMonthly[]> {
+    const uniqueYears = [...new Set(years.filter((y) => Number.isFinite(y)))];
+    if (uniqueYears.length === 0) return [];
+    const results = await Promise.all(uniqueYears.map((y) => this.getAllByYear(organizationId, y)));
+    return results.flat();
+  },
+
   async getAllByYear(
     organizationId: string,
     year: number,

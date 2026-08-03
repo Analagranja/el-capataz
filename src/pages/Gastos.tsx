@@ -16,6 +16,11 @@ import { formatArs } from '../utils/formatCurrency';
 import { todayLocalYmd } from '../utils/monthToDateFinance';
 import { boundsForYearMonthFilter } from '../utils/statsPeriod';
 import { numberInputValue, parseFormFloat, parseFormInt } from '../utils/formNumbers';
+import {
+  averageGramsPerHenDayFromClosedMonths,
+  DEFAULT_FEED_GRAMS_PER_HEN_DAY,
+  estimateDaysFromFeedKg,
+} from '../services/inventoryStockCalc';
 
 const LAST_BAG_WEIGHT_KEY = 'gastos_alimento_last_bag_weight_kg';
 
@@ -117,25 +122,11 @@ const GASTOS_MONTH_OPTIONS = [
   { value: '12', label: 'Diciembre' },
 ];
 
-const CONSUMPTION_MONTH_OPTIONS = GASTOS_MONTH_OPTIONS.filter((o) => o.value !== '');
-
-export type GastosConsumptionFocus = {
-  year: number;
-  month: number;
-  openConsumptionModal?: boolean;
-};
-
 type GastosProps = {
   onNavigate?: (page: Page) => void;
-  consumptionFocus?: GastosConsumptionFocus | null;
-  onConsumptionFocusConsumed?: () => void;
 };
 
-export default function Gastos({
-  onNavigate,
-  consumptionFocus,
-  onConsumptionFocusConsumed,
-}: GastosProps) {
+export default function Gastos({ onNavigate }: GastosProps) {
   const { organizationId } = useAuth();
   const bumpDashboardMetrics = useBumpDashboardMetrics();
   const now = React.useMemo(() => new Date(), []);
@@ -149,12 +140,10 @@ export default function Gastos({
   );
   const [loading, setLoading] = React.useState(true);
   const [consumption, setConsumption] = React.useState<FeedConsumptionMonthly | null>(null);
+  const [feedHistoryForEstimate, setFeedHistoryForEstimate] = React.useState<FeedConsumptionMonthly[]>(
+    []
+  );
   const [consumptionLoading, setConsumptionLoading] = React.useState(false);
-  const [consumptionModalOpen, setConsumptionModalOpen] = React.useState(false);
-  const [consumptionForm, setConsumptionForm] = React.useState({
-    kg_consumed: '',
-    notes: '',
-  });
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [formData, setFormData] = React.useState(getDefaultFormData('Alimento'));
@@ -186,23 +175,25 @@ export default function Gastos({
   }, [organizationId]);
 
   React.useEffect(() => {
-    if (!consumptionFocus) return;
-    const y = Number(consumptionFocus.year);
-    const m = Number(consumptionFocus.month);
-    if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) {
-      onConsumptionFocusConsumed?.();
+    if (!organizationId) {
+      setFeedHistoryForEstimate([]);
       return;
     }
-    setActiveTab('alimento');
-    setFilterGallinero('all');
-    setSelectedYear(String(y));
-    setSelectedMonth(String(m).padStart(2, '0'));
-    if (consumptionFocus.openConsumptionModal) {
-      setConsumptionForm({ kg_consumed: '', notes: '' });
-      setConsumptionModalOpen(true);
-    }
-    onConsumptionFocusConsumed?.();
-  }, [consumptionFocus, onConsumptionFocusConsumed]);
+    let cancelled = false;
+    const y = now.getFullYear();
+    feedConsumptionMonthlyService
+      .getAllByYears(organizationId, [y, y - 1])
+      .then((rows) => {
+        if (!cancelled) setFeedHistoryForEstimate(rows);
+      })
+      .catch((error) => {
+        console.error('Error loading feed history for estimate:', error);
+        if (!cancelled) setFeedHistoryForEstimate([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [organizationId, now]);
 
   React.useEffect(() => {
     if (!organizationId) {
@@ -367,76 +358,6 @@ export default function Gastos({
     return expenses.filter((e) => e.gallinero_id === filterGallinero);
   }, [expenses, filterGallinero]);
 
-  const openConsumptionModal = () => {
-    setConsumptionForm({
-      kg_consumed: consumption ? String(consumption.kg_consumed) : '',
-      notes: consumption?.notes ?? '',
-    });
-    setConsumptionModalOpen(true);
-  };
-
-  // Si cambia mes/año con el modal abierto, alinear el formulario con la declaración de ese período.
-  React.useEffect(() => {
-    if (!consumptionModalOpen || consumptionLoading) return;
-    setConsumptionForm({
-      kg_consumed: consumption ? String(consumption.kg_consumed) : '',
-      notes: consumption?.notes ?? '',
-    });
-  }, [
-    consumptionModalOpen,
-    consumptionLoading,
-    consumption?.id,
-    consumption?.kg_consumed,
-    consumption?.notes,
-    selectedYear,
-    selectedMonth,
-  ]);
-
-  const handleCloseConsumptionModal = () => {
-    setConsumptionModalOpen(false);
-    setConsumptionForm({ kg_consumed: '', notes: '' });
-  };
-
-  const persistConsumption = async () => {
-    if (!organizationId || !selectedMonth) return;
-    const year = Number(selectedYear);
-    const month = Number(selectedMonth);
-    const kg = parseFloat(consumptionForm.kg_consumed);
-    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(kg) || kg < 0) return;
-    try {
-      const gallineroId = consumptionGallineroIdFromFilter(filterGallinero);
-      await feedConsumptionMonthlyService.upsert(
-        organizationId,
-        year,
-        month,
-        kg,
-        consumptionForm.notes,
-        gallineroId,
-        poultryCountForConsumption
-      );
-      await reloadConsumption();
-      handleCloseConsumptionModal();
-    } catch (error) {
-      console.error('Error saving feed consumption:', error);
-    }
-  };
-
-  const handleSaveConsumption = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await persistConsumption();
-  };
-
-  const handleDeleteConsumption = async () => {
-    if (!organizationId || !consumption) return;
-    if (!window.confirm('¿Eliminar el consumo declarado de este mes?')) return;
-    try {
-      await feedConsumptionMonthlyService.delete(organizationId, consumption.id);
-      setConsumption(null);
-    } catch (error) {
-      console.error('Error deleting feed consumption:', error);
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!organizationId) return;
@@ -557,11 +478,6 @@ export default function Gastos({
     [selectedMonth]
   );
 
-  const consumptionGallineroLabel = React.useMemo(() => {
-    if (filterGallinero === 'all' || filterGallinero === 'general') return 'Toda la granja';
-    return gallineros.find((g) => g.id === filterGallinero)?.name ?? 'Gallinero';
-  }, [filterGallinero, gallineros]);
-
   const poultryCountForConsumption = React.useMemo(() => {
     if (filterGallinero !== 'all' && filterGallinero !== 'general') {
       const g = gallineros.find((item) => item.id === filterGallinero);
@@ -630,6 +546,39 @@ export default function Gastos({
   const isMaplesForm = isMaplesPackaging(formData.category);
   const kilosFromBags = (formData.bags_count || 0) * (formData.bag_weight_kg || 0);
   const totalFromBagsPrice = (formData.bags_count || 0) * (formData.bag_price || 0);
+
+  const purchaseReachEstimate = React.useMemo(() => {
+    if (!isAlimentoForm) return null;
+    const kg =
+      formData.unit === 'bolsas' ? kilosFromBags : Math.max(0, Number(formData.quantity_kg) || 0);
+    if (!(kg > 0)) return null;
+
+    const hens =
+      formData.gallinero_id != null && formData.gallinero_id !== ''
+        ? gallineros.find((g) => g.id === formData.gallinero_id)?.current_count ?? 0
+        : gallineros.reduce((sum, g) => sum + (g.current_count ?? 0), 0);
+    if (!(hens > 0)) return null;
+
+    const fromHistory = averageGramsPerHenDayFromClosedMonths(feedHistoryForEstimate, hens);
+    const gramsPerHenDay = fromHistory ?? DEFAULT_FEED_GRAMS_PER_HEN_DAY;
+    const days = estimateDaysFromFeedKg(kg, gramsPerHenDay, hens);
+    if (days == null) return null;
+    return {
+      days,
+      kg,
+      hens,
+      gramsPerHenDay,
+      gramsSource: fromHistory != null ? ('history' as const) : ('default' as const),
+    };
+  }, [
+    isAlimentoForm,
+    formData.unit,
+    formData.quantity_kg,
+    formData.gallinero_id,
+    kilosFromBags,
+    gallineros,
+    feedHistoryForEstimate,
+  ]);
 
   if (loading) {
     return <div className="p-8 text-center text-gray-500">Cargando...</div>;
@@ -750,21 +699,32 @@ export default function Gastos({
               {consumption.notes?.trim() ? (
                 <p className="text-sm text-gray-500">{consumption.notes}</p>
               ) : null}
-              <div className="flex flex-wrap gap-2 pt-1">
-                <Button variant="secondary" size="sm" type="button" onClick={openConsumptionModal}>
-                  Editar
-                </Button>
-                <Button variant="danger" size="sm" type="button" onClick={handleDeleteConsumption}>
-                  Eliminar
-                </Button>
-              </div>
+              <p className="text-xs text-gray-500 pt-1">
+                Solo lectura. Para cargar o corregir la declaración:{' '}
+                <button
+                  type="button"
+                  className="font-medium text-capataz-forest underline hover:text-capataz-leaf"
+                  onClick={() => onNavigate?.('produccion')}
+                >
+                  Producción → Declarar consumo del mes
+                </button>
+                .
+              </p>
             </div>
           ) : (
             <div className="space-y-3">
               <p className="text-gray-600">No hay consumo declarado para este mes</p>
-              <Button variant="primary" size="sm" type="button" onClick={openConsumptionModal}>
-                Declarar consumo
-              </Button>
+              <p className="text-sm text-gray-500">
+                La declaración mensual se carga desde{' '}
+                <button
+                  type="button"
+                  className="font-medium text-capataz-forest underline hover:text-capataz-leaf"
+                  onClick={() => onNavigate?.('produccion')}
+                >
+                  Producción → Declarar consumo del mes
+                </button>
+                .
+              </p>
             </div>
           )}
         </Card>
@@ -984,6 +944,22 @@ export default function Gastos({
             />
           ) : null}
 
+          {purchaseReachEstimate != null ? (
+            <p className="text-sm text-gray-600">
+              Esta compra ({purchaseReachEstimate.kg.toFixed(1)} kg) te alcanza para aproximadamente{' '}
+              <strong className="tabular-nums text-gray-900">
+                {purchaseReachEstimate.days.toFixed(1)} días
+              </strong>
+              <span className="text-xs text-gray-500">
+                {' '}
+                · base {purchaseReachEstimate.gramsPerHenDay.toFixed(0)} g/ave/día
+                {purchaseReachEstimate.gramsSource === 'default' ? ' (referencia)' : ' (meses cerrados)'}
+                {' · '}
+                {purchaseReachEstimate.hens} aves
+              </span>
+            </p>
+          ) : null}
+
           {isMaplesForm && (
             <>
               <Select
@@ -1038,68 +1014,6 @@ export default function Gastos({
               {editingId ? 'Guardar cambios' : 'Guardar'}
             </Button>
             <Button variant="secondary" type="button" onClick={handleCloseModal} className="flex-1">
-              Cancelar
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      <Modal
-        isOpen={consumptionModalOpen}
-        onClose={handleCloseConsumptionModal}
-        title={consumption ? 'Editar consumo' : 'Declarar consumo'}
-      >
-        <form onSubmit={handleSaveConsumption} className="space-y-4">
-          <p className="text-sm text-gray-600">
-            Declará el consumo total del mes, aunque peses o controles el alimento con otra
-            frecuencia en tu galpón. Este dato es el que usa el sistema para calcular tu Inventario
-            y Estadísticas.
-          </p>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Select
-              label="Año"
-              options={yearOptions}
-              value={selectedYear}
-              onChange={(e) => setSelectedYear(e.target.value)}
-            />
-            <Select
-              label="Mes"
-              options={CONSUMPTION_MONTH_OPTIONS}
-              value={selectedMonth || String(now.getMonth() + 1).padStart(2, '0')}
-              onChange={(e) => setSelectedMonth(e.target.value)}
-            />
-          </div>
-          <p className="text-sm text-gray-600">
-            Gallinero: <strong>{consumptionGallineroLabel}</strong>
-          </p>
-          <Input
-            label="Kg consumidos en el mes"
-            type="number"
-            step="0.01"
-            min="0"
-            value={consumptionForm.kg_consumed}
-            onChange={(e) => setConsumptionForm({ ...consumptionForm, kg_consumed: e.target.value })}
-            required
-          />
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notas (opcional)</label>
-            <textarea
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm min-h-[72px]"
-              value={consumptionForm.notes}
-              onChange={(e) => setConsumptionForm({ ...consumptionForm, notes: e.target.value })}
-              placeholder="Opcional"
-            />
-          </div>
-          <div className="flex gap-2 pt-4">
-            <Button variant="primary" type="submit" className="flex-1">
-              Guardar
-            </Button>
-            <Button
-              variant="secondary"
-              type="button"
-              onClick={handleCloseConsumptionModal}
-              className="flex-1"
-            >
               Cancelar
             </Button>
           </div>

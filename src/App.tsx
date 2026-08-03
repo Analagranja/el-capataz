@@ -10,6 +10,7 @@ import Produccion from './pages/Produccion';
 import Ventas from './pages/Ventas';
 import Clientes from './pages/Clientes';
 import Gastos from './pages/Gastos';
+import Inventario from './pages/Inventario';
 import Eventos from './pages/Eventos';
 import Estadisticas from './pages/Estadisticas';
 import Configuracion from './pages/Configuracion';
@@ -27,9 +28,17 @@ function normalizeAppRole(raw: unknown): UserRole {
   return 'admin';
 }
 
+export type ProduccionConsumptionFocus = {
+  year: number;
+  month: number;
+  openMonthlyModal?: boolean;
+};
+
 function AppShell() {
   const [currentPage, setCurrentPage] = React.useState<Page>('dashboard');
   const [selectedGallineroId, setSelectedGallineroId] = React.useState<string | null>(null);
+  const [produccionConsumptionFocus, setProduccionConsumptionFocus] =
+    React.useState<ProduccionConsumptionFocus | null>(null);
   const { role: profileRole } = useAuth();
   const accessRole = normalizeAppRole(profileRole);
 
@@ -44,6 +53,15 @@ function AppShell() {
     setCurrentPage('produccion');
   };
 
+  const goToDeclareFeedConsumption = (target: { year: number; month: number }) => {
+    setProduccionConsumptionFocus({
+      year: target.year,
+      month: target.month,
+      openMonthlyModal: true,
+    });
+    setCurrentPage('produccion');
+  };
+
   const renderPage = () => {
     const pageProps = {
       selectedGallineroId,
@@ -51,17 +69,28 @@ function AppShell() {
 
     switch (currentPage) {
       case 'dashboard':
-        return <Dashboard {...pageProps} />;
+        return (
+          <Dashboard {...pageProps} onNavigateToFeedConsumption={goToDeclareFeedConsumption} />
+        );
       case 'gallineros':
         return <Gallineros onRegisterProduction={handleRegisterProduction} />;
       case 'produccion':
-        return <Produccion {...pageProps} />;
+        return (
+          <Produccion
+            {...pageProps}
+            onNavigate={setCurrentPage}
+            consumptionFocus={produccionConsumptionFocus}
+            onConsumptionFocusConsumed={() => setProduccionConsumptionFocus(null)}
+          />
+        );
       case 'ventas':
-        return <Ventas />;
+        return <Ventas onNavigate={setCurrentPage} />;
       case 'clientes':
         return <Clientes />;
       case 'gastos':
-        return <Gastos />;
+        return <Gastos onNavigate={setCurrentPage} />;
+      case 'inventario':
+        return <Inventario onNavigateToFeedConsumption={goToDeclareFeedConsumption} />;
       case 'eventos':
         return <Eventos {...pageProps} />;
       case 'estadisticas':
@@ -69,7 +98,9 @@ function AppShell() {
       case 'configuracion':
         return <Configuracion />;
       default:
-        return <Dashboard {...pageProps} />;
+        return (
+          <Dashboard {...pageProps} onNavigateToFeedConsumption={goToDeclareFeedConsumption} />
+        );
     }
   };
 
