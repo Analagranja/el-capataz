@@ -68,7 +68,7 @@ check('maple_grande sin stock → Grande 0 (nunca negativo)', () => {
   assert.equal(stock.sin_clasificar, 0);
 });
 
-check('docena → Sin clasificar −12 vía residual; packaging Docena −1', () => {
+check('docena → Sin clasificar −12 vía residual; packaging Docena 0 sin compras', () => {
   const production: ProductionRecord[] = [
     {
       id: 'u1',
@@ -88,11 +88,11 @@ check('docena → Sin clasificar −12 vía residual; packaging Docena −1', ()
   const eggs = computeEggStock(production, [sale('docena', 1)]);
   const maples = computeMapleStock(emptyPurchases(), [sale('docena', 1)]);
   assert.equal(eggs.sin_clasificar, 38);
-  assert.equal(maples.docena, -1);
+  assert.equal(maples.docena, 0);
   assert.equal(maples.maple, 0);
 });
 
-check('media_docena → packaging Media Docena −1', () => {
+check('media_docena → packaging Media Docena 0 sin compras', () => {
   const production: ProductionRecord[] = [
     {
       id: 'u2',
@@ -112,7 +112,7 @@ check('media_docena → packaging Media Docena −1', () => {
   const eggs = computeEggStock(production, [sale('media_docena', 1)]);
   const maples = computeMapleStock(emptyPurchases(), [sale('media_docena', 1)]);
   assert.equal(eggs.sin_clasificar, 14);
-  assert.equal(maples.media_docena, -1);
+  assert.equal(maples.media_docena, 0);
 });
 
 check('pack15 → Sin clasificar residual; Maple packaging −1', () => {
@@ -366,6 +366,16 @@ check('baseline + movimientos desde la fecha', () => {
   assert.equal(stock.maple, 106); // 100 + 10 - 4
   assert.equal(stock.docena, 18); // 20 - 2
   assert.equal(stock.media_docena, 5);
+});
+
+check('packaging sin saldo queda en 0 (no negativo)', () => {
+  const stock = computeMapleStockFromBaseline(
+    { maple: 0, docena: 0, media_docena: 0 },
+    [sale('maple', 2), sale('media_docena', 40)],
+    { maple: 0, docena: 0, media_docena: 240 }
+  );
+  assert.equal(stock.maple, 0);
+  assert.equal(stock.media_docena, 200);
 });
 
 check('dateOnOrAfter inclusive', () => {

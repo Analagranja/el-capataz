@@ -75,8 +75,6 @@ export interface EggInventorySnapshot {
 
 export interface MapleInventorySnapshot {
   byItem: Record<MapleStockItemKey, number>;
-  /** Unidades vendidas que ya descontó el cálculo (histórico o desde apertura). */
-  soldByItem: Record<MapleStockItemKey, number>;
   /** Null = sin apertura; cálculo histórico completo (retrocompatible). */
   baseline: {
     baselineDate: string;
@@ -132,18 +130,6 @@ function isMissingColumnError(error: unknown, column: string): boolean {
   if (!error || typeof error !== 'object') return false;
   const e = error as { code?: string; message?: string };
   return e.code === 'PGRST204' && String(e.message || '').includes(`'${column}'`);
-}
-
-function soldPackagingByItem(sales: Sale[]): Record<MapleStockItemKey, number> {
-  const empty = computeMapleStock(
-    { maple: 0, docena: 0, media_docena: 0 },
-    sales
-  );
-  return {
-    maple: Math.max(0, -empty.maple),
-    docena: Math.max(0, -empty.docena),
-    media_docena: Math.max(0, -empty.media_docena),
-  };
 }
 
 function resolveExpenseKg(row: Record<string, unknown>): number {
@@ -358,7 +344,6 @@ export const inventoryStockService = {
       const purchased = sumPackagingPurchases(expenseRows);
       return {
         byItem: computeMapleStock(purchased, sales),
-        soldByItem: soldPackagingByItem(sales),
         baseline: null,
       };
     }
@@ -375,7 +360,6 @@ export const inventoryStockService = {
     };
     return {
       byItem: computeMapleStockFromBaseline(purchasedAfter, salesAfter, baselineByItem),
-      soldByItem: soldPackagingByItem(salesAfter),
       baseline: { baselineDate: cutoff, byItem: baselineByItem },
     };
   },

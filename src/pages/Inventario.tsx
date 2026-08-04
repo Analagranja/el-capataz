@@ -170,8 +170,6 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
 
   const eggKeys: EggStockItemKey[] = ['grande', 'mediano', 'chico', 'sin_clasificar'];
   const mapleKeys: MapleStockItemKey[] = ['maple', 'docena', 'media_docena'];
-  const hasNegativeMaples =
-    maples != null && mapleKeys.some((k) => (maples.byItem[k] ?? 0) < 0);
 
   return (
     <div className="space-y-6">
@@ -283,41 +281,16 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
               <Package className="h-5 w-5 text-sky-700" aria-hidden />
               <h2 className="text-lg font-semibold">Maples vacíos</h2>
             </div>
-            {hasNegativeMaples && !maples?.baseline ? (
-              <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                Stock negativo: faltan compras históricas con cantidad, o conviene declarar el stock
-                físico actual como apertura.
-              </p>
-            ) : null}
             <ul className="space-y-2 text-sm text-gray-700">
               {mapleKeys.map((key) => (
                 <li key={key} className="flex justify-between border-b border-gray-100 pb-2">
                   <span>{MAPLE_STOCK_LABELS[key]}</span>
-                  <span
-                    className={`text-xl font-bold tabular-nums ${
-                      (maples?.byItem[key] ?? 0) < 0 ? 'text-red-600' : 'text-gray-900'
-                    }`}
-                  >
+                  <span className="text-xl font-bold tabular-nums text-gray-900">
                     {formatQty(maples?.byItem[key] ?? 0)}
                   </span>
                 </li>
               ))}
             </ul>
-            {maples && mapleKeys.some((k) => (maples.soldByItem[k] ?? 0) > 0) ? (
-              <p className="text-xs text-gray-500">
-                Descontado por ventas
-                {maples.baseline ? ' desde la apertura' : ''}:{' '}
-                {mapleKeys
-                  .filter((k) => (maples.soldByItem[k] ?? 0) > 0)
-                  .map((k) => `${MAPLE_STOCK_LABELS[k]} −${formatQty(maples.soldByItem[k])}`)
-                  .join(' · ')}
-              </p>
-            ) : null}
-            <p className="text-xs text-gray-500">
-              {maples?.baseline
-                ? `Línea base del ${formatBaselineDate(maples.baseline.baselineDate)} + compras − ventas desde esa fecha (también ventas cargadas después de la apertura).`
-                : 'Entradas: gastos Maples / Packaging con cantidad. Salidas: ventas por formato.'}
-            </p>
             <Button type="button" variant="secondary" size="sm" onClick={openMapleBaseline}>
               {maples?.baseline ? 'Actualizar stock inicial' : 'Declarar stock inicial'}
             </Button>
@@ -336,9 +309,8 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
-            Ingresá el stock físico que tenés hoy. Esto reemplaza el saldo histórico de packaging; de
-            acá en más el inventario suma compras (Gastos) y resta ventas automáticamente. Si cargás
-            ventas con fecha anterior a esta apertura, también descuentan packaging.
+            Ingresá el stock físico que tenés hoy. De acá en más el inventario suma compras (Gastos) y
+            resta ventas automáticamente.
           </p>
           <p className="text-sm text-gray-700">
             Fecha de corte: <strong>{formatBaselineDate(cutoffDate)}</strong>

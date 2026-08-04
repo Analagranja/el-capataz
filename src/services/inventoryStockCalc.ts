@@ -113,8 +113,35 @@ export function computeEggStock(
 /**
  * Stock de packaging: compras (packaging_quantity) − ventas.
  * purchasedByItem ya viene sumado por ítem.
+ * Piso en 0 (igual que huevos): sin saldo no queda negativo.
  */
 export function computeMapleStock(
+  purchasedByItem: Record<MapleStockItemKey, number>,
+  sales: Sale[]
+): Record<MapleStockItemKey, number> {
+  return floorMapleStock(rawMapleMovement(purchasedByItem, sales));
+}
+
+/**
+ * Con línea base: stock = max(0, baseline + compras − ventas).
+ * Sin baseline (null): misma lógica histórica que computeMapleStock.
+ * purchasedAfter / salesAfter deben venir ya filtrados por baseline_date cuando hay baseline.
+ */
+export function computeMapleStockFromBaseline(
+  purchasedAfter: Record<MapleStockItemKey, number>,
+  salesAfter: Sale[],
+  baselineByItem: Record<MapleStockItemKey, number> | null
+): Record<MapleStockItemKey, number> {
+  const movement = rawMapleMovement(purchasedAfter, salesAfter);
+  if (!baselineByItem) return floorMapleStock(movement);
+  return floorMapleStock({
+    maple: (baselineByItem.maple || 0) + movement.maple,
+    docena: (baselineByItem.docena || 0) + movement.docena,
+    media_docena: (baselineByItem.media_docena || 0) + movement.media_docena,
+  });
+}
+
+function rawMapleMovement(
   purchasedByItem: Record<MapleStockItemKey, number>,
   sales: Sale[]
 ): Record<MapleStockItemKey, number> {
@@ -135,22 +162,13 @@ export function computeMapleStock(
   };
 }
 
-/**
- * Con línea base: stock = baseline + (compras ≥ fecha − ventas ≥ fecha).
- * Sin baseline (null): misma lógica histórica que computeMapleStock.
- * purchasedAfter / salesAfter deben venir ya filtrados por baseline_date cuando hay baseline.
- */
-export function computeMapleStockFromBaseline(
-  purchasedAfter: Record<MapleStockItemKey, number>,
-  salesAfter: Sale[],
-  baselineByItem: Record<MapleStockItemKey, number> | null
+function floorMapleStock(
+  stock: Record<MapleStockItemKey, number>
 ): Record<MapleStockItemKey, number> {
-  const movement = computeMapleStock(purchasedAfter, salesAfter);
-  if (!baselineByItem) return movement;
   return {
-    maple: (baselineByItem.maple || 0) + movement.maple,
-    docena: (baselineByItem.docena || 0) + movement.docena,
-    media_docena: (baselineByItem.media_docena || 0) + movement.media_docena,
+    maple: Math.max(0, stock.maple || 0),
+    docena: Math.max(0, stock.docena || 0),
+    media_docena: Math.max(0, stock.media_docena || 0),
   };
 }
 
