@@ -18,6 +18,7 @@ import {
   computeMapleStockFromBaseline,
   dateOnOrAfter,
   estimateFeedDaysRemaining,
+  saleAffectsPackagingAfterBaseline,
   sumDeclaredFeedConsumptionKg,
   type EggStockItemKey,
   type MapleStockItemKey,
@@ -41,6 +42,7 @@ export {
   computeMapleStockFromBaseline,
   dateOnOrAfter,
   yearMonthOnOrAfter,
+  saleAffectsPackagingAfterBaseline,
   computeFeedStockKg,
   computeFeedStockFromBaseline,
   aggregateClosedMonthFeedRates,
@@ -73,6 +75,8 @@ export interface EggInventorySnapshot {
 
 export interface MapleInventorySnapshot {
   byItem: Record<MapleStockItemKey, number>;
+  /** Unidades vendidas que ya descontó el cálculo (histórico o desde apertura). */
+  soldByItem: Record<MapleStockItemKey, number>;
   /** Null = sin apertura; cálculo histórico completo (retrocompatible). */
   baseline: {
     baselineDate: string;
@@ -114,13 +118,31 @@ function mapSaleRow(row: Record<string, unknown>): Sale {
     id: row.id as string,
     organization_id: row.organization_id as string,
     customer_id: (row.customer_id as string | null) ?? null,
-    date: row.sale_date as string,
-    type: row.sale_type as SaleType,
+    date: String(row.sale_date ?? '').slice(0, 10),
+    type: String(row.sale_type ?? '').trim() as SaleType,
     quantity: Number(row.quantity || 0),
     price_per_unit: Number(row.unit_price ?? row.price_per_unit ?? 0),
     total_price: Number(row.total_price || 0),
     notes: (row.notes as string) || '',
     created_at: row.created_at as string,
+  };
+}
+
+function isMissingColumnError(error: unknown, column: string): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const e = error as { code?: string; message?: string };
+  return e.code === 'PGRST204' && String(e.message || '').includes(`'${column}'`);
+}
+
+function soldPackagingByItem(sales: Sale[]): Record<MapleStockItemKey, number> {
+  const empty = computeMapleStock(
+    { maple: 0, docena: 0, media_docena: 0 },
+    sales
+  );
+  return {
+    maple: Math.max(0, -empty.maple),
+    docena: Math.max(0, -empty.docena),
+    media_docena: Math.max(0, -empty.media_docena),
   };
 }
 
@@ -171,22 +193,34 @@ function mapFeedBaselineRow(row: Record<string, unknown>): FeedStockBaseline {
 }
 
 async function fetchSales(organizationId: string): Promise<Sale[]> {
-  const { data, error } = await supabase
+  const fullSelect =
+    'id, organization_id, customer_id, sale_date, sale_type, quantity, unit_price, price_per_unit, total_price, notes, created_at';
+  let { data, error } = await supabase
     .from('sales')
-    .select(
-      'id, organization_id, customer_id, sale_date, sale_type, quantity, unit_price, price_per_unit, total_price, notes, created_at'
-    )
+    .select(fullSelect)
     .eq('organization_id', organizationId);
-  if (error) {
+
+  if (isMissingColumnError(error, 'price_per_unit')) {
     const retry = await supabase
       .from('sales')
       .select(
         'id, organization_id, customer_id, sale_date, sale_type, quantity, unit_price, total_price, notes, created_at'
       )
       .eq('organization_id', organizationId);
-    if (retry.error) throw retry.error;
-    return (retry.data || []).map((row) => mapSaleRow(row as Record<string, unknown>));
+    data = retry.data;
+    error = retry.error;
+  } else if (isMissingColumnError(error, 'unit_price')) {
+    const retry = await supabase
+      .from('sales')
+      .select(
+        'id, organization_id, customer_id, sale_date, sale_type, quantity, price_per_unit, total_price, notes, created_at'
+      )
+      .eq('organization_id', organizationId);
+    data = retry.data;
+    error = retry.error;
   }
+
+  if (error) throw error;
   return (data || []).map((row) => mapSaleRow(row as Record<string, unknown>));
 }
 
@@ -322,12 +356,18 @@ export const inventoryStockService = {
 
     if (!baseline) {
       const purchased = sumPackagingPurchases(expenseRows);
-      return { byItem: computeMapleStock(purchased, sales), baseline: null };
+      return {
+        byItem: computeMapleStock(purchased, sales),
+        soldByItem: soldPackagingByItem(sales),
+        baseline: null,
+      };
     }
 
     const cutoff = baseline.baseline_date;
     const purchasedAfter = sumPackagingPurchases(expenseRows, cutoff);
-    const salesAfter = sales.filter((s) => dateOnOrAfter(s.date, cutoff));
+    const salesAfter = sales.filter((s) =>
+      saleAffectsPackagingAfterBaseline(s, cutoff, baseline.updated_at)
+    );
     const baselineByItem: Record<MapleStockItemKey, number> = {
       maple: baseline.maple,
       docena: baseline.docena,
@@ -335,6 +375,7 @@ export const inventoryStockService = {
     };
     return {
       byItem: computeMapleStockFromBaseline(purchasedAfter, salesAfter, baselineByItem),
+      soldByItem: soldPackagingByItem(salesAfter),
       baseline: { baselineDate: cutoff, byItem: baselineByItem },
     };
   },

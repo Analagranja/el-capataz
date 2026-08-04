@@ -17,6 +17,7 @@ import {
   estimateDaysFromFeedKg,
   estimateFeedDaysRemaining,
   mapleImpactForSale,
+  saleAffectsPackagingAfterBaseline,
   sumDeclaredFeedConsumptionKg,
   yearMonthOnOrAfter,
   type MapleStockItemKey,
@@ -371,6 +372,20 @@ check('dateOnOrAfter inclusive', () => {
   assert.equal(dateOnOrAfter('2026-08-03', '2026-08-03'), true);
   assert.equal(dateOnOrAfter('2026-08-02', '2026-08-03'), false);
   assert.equal(dateOnOrAfter('2026-08-04', '2026-08-03'), true);
+});
+
+check('venta con fecha anterior pero cargada después de la apertura sí descuenta', () => {
+  const openedAt = '2026-08-04T12:00:00.000Z';
+  const backfilled = sale('media_docena', 10, '2026-07-20');
+  backfilled.created_at = '2026-08-04T15:00:00.000Z';
+  assert.equal(saleAffectsPackagingAfterBaseline(backfilled, '2026-08-04', openedAt), true);
+
+  const oldSale = sale('media_docena', 5, '2026-07-10');
+  oldSale.created_at = '2026-07-10T12:00:00.000Z';
+  assert.equal(saleAffectsPackagingAfterBaseline(oldSale, '2026-08-04', openedAt), false);
+
+  const sameDay = sale('media_docena', 3, '2026-08-04');
+  assert.equal(saleAffectsPackagingAfterBaseline(sameDay, '2026-08-04', openedAt), true);
 });
 
 check('consumo stock: no doblecuenta org + gallinero del mismo mes', () => {

@@ -92,7 +92,8 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
   }, [load]);
 
   const openMapleBaseline = () => {
-    const src = maples?.baseline?.byItem ?? maples?.byItem;
+    // Siempre el stock actual (no la apertura vieja): al actualizar, se declara lo físico de hoy.
+    const src = maples?.byItem;
     const nonNeg = (n: number | undefined) => String(Math.max(0, Math.floor(Number(n) || 0)));
     setMapleForm({
       maple: nonNeg(src?.maple),
@@ -302,9 +303,19 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
                 </li>
               ))}
             </ul>
+            {maples && mapleKeys.some((k) => (maples.soldByItem[k] ?? 0) > 0) ? (
+              <p className="text-xs text-gray-500">
+                Descontado por ventas
+                {maples.baseline ? ' desde la apertura' : ''}:{' '}
+                {mapleKeys
+                  .filter((k) => (maples.soldByItem[k] ?? 0) > 0)
+                  .map((k) => `${MAPLE_STOCK_LABELS[k]} −${formatQty(maples.soldByItem[k])}`)
+                  .join(' · ')}
+              </p>
+            ) : null}
             <p className="text-xs text-gray-500">
               {maples?.baseline
-                ? `Línea base del ${formatBaselineDate(maples.baseline.baselineDate)} + compras − ventas desde esa fecha.`
+                ? `Línea base del ${formatBaselineDate(maples.baseline.baselineDate)} + compras − ventas desde esa fecha (también ventas cargadas después de la apertura).`
                 : 'Entradas: gastos Maples / Packaging con cantidad. Salidas: ventas por formato.'}
             </p>
             <Button type="button" variant="secondary" size="sm" onClick={openMapleBaseline}>
@@ -326,7 +337,8 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
             Ingresá el stock físico que tenés hoy. Esto reemplaza el saldo histórico de packaging; de
-            acá en más el inventario suma compras (Gastos) y resta ventas automáticamente.
+            acá en más el inventario suma compras (Gastos) y resta ventas automáticamente. Si cargás
+            ventas con fecha anterior a esta apertura, también descuentan packaging.
           </p>
           <p className="text-sm text-gray-700">
             Fecha de corte: <strong>{formatBaselineDate(cutoffDate)}</strong>

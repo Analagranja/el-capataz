@@ -159,6 +159,23 @@ export function dateOnOrAfter(dateYmd: string, cutoffYmd: string): boolean {
   return String(dateYmd || '').slice(0, 10) >= String(cutoffYmd || '').slice(0, 10);
 }
 
+/**
+ * Ventas que mueven packaging después de una apertura.
+ * - Fecha de venta ≥ fecha de corte, o
+ * - Cargada en el sistema después de la apertura (created_at ≥ updated_at),
+ *   aunque la fecha de venta sea anterior (regularizar ventas viejas).
+ */
+export function saleAffectsPackagingAfterBaseline(
+  sale: { date: string; created_at?: string | null },
+  baselineDate: string,
+  baselineUpdatedAt?: string | null
+): boolean {
+  if (dateOnOrAfter(sale.date, baselineDate)) return true;
+  const created = String(sale.created_at || '').trim();
+  const openedAt = String(baselineUpdatedAt || '').trim();
+  return Boolean(created && openedAt && created >= openedAt);
+}
+
 /** Mes (year, month) ≥ mes del cutoff YYYY-MM-DD (inclusive). */
 export function yearMonthOnOrAfter(year: number, month: number, cutoffYmd: string): boolean {
   const y = Number(String(cutoffYmd).slice(0, 4));
