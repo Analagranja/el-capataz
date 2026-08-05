@@ -5,14 +5,9 @@ import { useAuth } from '../contexts/AuthContext';
 const ROLE_VIEW_OVERRIDE_KEY = 'temporary_role_view_override';
 const ROLE_VIEW_CHANGED_EVENT = 'temporary-role-view-changed';
 
-const OPERATOR_BLOCKED_PAGES: Page[] = [
-  'ventas',
-  'gastos',
-  'clientes',
-  'estadisticas',
-  'configuracion',
-];
-const VENDEDOR_BLOCKED_PAGES: Page[] = ['gastos', 'estadisticas', 'configuracion'];
+/** Páginas permitidas por rol (admin = todas). */
+const OPERATOR_ALLOWED_PAGES: Page[] = ['gallineros', 'produccion', 'eventos', 'inventario'];
+const VENDEDOR_ALLOWED_PAGES: Page[] = ['ventas', 'clientes', 'gastos', 'inventario'];
 
 function readRoleOverride(): UserRole | null {
   if (typeof window === 'undefined') return null;
@@ -24,9 +19,16 @@ function readRoleOverride(): UserRole | null {
 /** Navegación lateral por rol (RBAC). */
 export function canAccessPage(role: UserRole, page: Page): boolean {
   if (role === 'admin') return true;
-  if (role === 'operator') return !OPERATOR_BLOCKED_PAGES.includes(page);
-  if (role === 'vendedor') return !VENDEDOR_BLOCKED_PAGES.includes(page);
+  if (role === 'operator') return OPERATOR_ALLOWED_PAGES.includes(page);
+  if (role === 'vendedor') return VENDEDOR_ALLOWED_PAGES.includes(page);
   return false;
+}
+
+/** Primera pantalla al entrar o si la actual no está permitida. */
+export function defaultPageForRole(role: UserRole): Page {
+  if (role === 'operator') return 'gallineros';
+  if (role === 'vendedor') return 'ventas';
+  return 'dashboard';
 }
 
 /** Gallineros: crear / editar / eliminar estructuras (solo admin). */

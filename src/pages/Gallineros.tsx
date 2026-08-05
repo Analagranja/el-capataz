@@ -827,10 +827,13 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
             {detailActiveFlocks.length > 1 ? (
               <Select
                 label="Camada"
-                options={detailActiveFlocks.map((f) => ({
-                  value: f.id,
-                  label: `${f.name} (${f.current_count} gallinas)`,
-                }))}
+                options={[
+                  { value: '', label: 'Elegir camada?' },
+                  ...detailActiveFlocks.map((f) => ({
+                    value: f.id,
+                    label: `${f.name} (${f.current_count} gallinas)`,
+                  })),
+                ]}
                 value={mortalityFlockId}
                 onChange={(e) => setMortalityFlockId(e.target.value)}
                 required

@@ -314,11 +314,11 @@ export default function Configuracion() {
                   { value: 'admin', label: 'Administrador (acceso completo)' },
                   {
                     value: 'operator',
-                    label: 'Operario (producción y eventos; sin ventas ni gastos)',
+                    label: 'Operario (gallineros, producción, eventos e inventario)',
                   },
                   {
                     value: 'vendedor',
-                    label: 'Vendedor (clientes y ventas; producción y gallineros solo lectura)',
+                    label: 'Vendedor (ventas, clientes, gastos e inventario)',
                   },
                 ]}
                 value={inviteDefaultRole}

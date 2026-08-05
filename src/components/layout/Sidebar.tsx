@@ -14,40 +14,19 @@ import {
   ClipboardList,
   Settings,
 } from 'lucide-react';
-import { Page, type UserRole } from '../../types';
+import { Page } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
+import { canAccessPage, useRole } from '../../hooks/useRole';
 
 interface SidebarProps {
   currentPage: Page;
   onNavigate: (page: Page) => void;
 }
 
-/** Rol efectivo del perfil en Supabase (AuthContext carga `profiles.role`; siempre minúsculas). */
-function normalizeMenuRole(raw: unknown): UserRole {
-  const s = String(raw ?? 'admin')
-    .trim()
-    .toLowerCase();
-  if (s === 'operator') return 'operator';
-  if (s === 'vendedor') return 'vendedor';
-  return 'admin';
-}
-
-/** Menú lateral según rol real — sin vista temporal ni overrides (solo RBAC). */
-function showMenuItemForRole(pageId: Page, userRole: UserRole): boolean {
-  if (userRole === 'admin') return true;
-  if (userRole === 'operator') {
-    return !['ventas', 'clientes', 'gastos', 'estadisticas', 'configuracion'].includes(pageId);
-  }
-  if (userRole === 'vendedor') {
-    return !['gastos', 'estadisticas', 'configuracion'].includes(pageId);
-  }
-  return true;
-}
-
 export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
   const [isOpen, setIsOpen] = React.useState(false);
-  const { signOut, role: profileRoleFromDb } = useAuth();
-  const userRole = normalizeMenuRole(profileRoleFromDb);
+  const { signOut } = useAuth();
+  const { role: userRole } = useRole();
 
   const menuItems: { id: Page; label: string; icon: typeof Home }[] = [
     { id: 'dashboard', label: 'Panel', icon: Home },
@@ -61,7 +40,7 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
     { id: 'estadisticas', label: 'Estadísticas', icon: BarChart3 },
     { id: 'configuracion', label: 'Configuración', icon: Settings },
   ];
-  const visibleMenuItems = menuItems.filter((item) => showMenuItemForRole(item.id, userRole));
+  const visibleMenuItems = menuItems.filter((item) => canAccessPage(userRole, item.id));
 
   const handleNavigate = (page: Page) => {
     onNavigate(page);

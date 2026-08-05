@@ -1,5 +1,5 @@
 import React from 'react';
-import { Page, type UserRole } from './types';
+import { Page } from './types';
 import { useAuth } from './contexts/AuthContext';
 import AuthScreen from './components/auth/AuthScreen';
 import Sidebar from './components/layout/Sidebar';
@@ -16,17 +16,8 @@ import Estadisticas from './pages/Estadisticas';
 import Configuracion from './pages/Configuracion';
 import Button from './components/ui/Button';
 import { Loader2 } from 'lucide-react';
-import { canAccessPage } from './hooks/useRole';
+import { canAccessPage, defaultPageForRole, useRole } from './hooks/useRole';
 import { DashboardMetricsRefreshProvider } from './contexts/DashboardMetricsRefreshContext';
-
-function normalizeAppRole(raw: unknown): UserRole {
-  const s = String(raw ?? 'admin')
-    .trim()
-    .toLowerCase();
-  if (s === 'operator') return 'operator';
-  if (s === 'vendedor') return 'vendedor';
-  return 'admin';
-}
 
 export type ProduccionConsumptionFocus = {
   year: number;
@@ -39,12 +30,11 @@ function AppShell() {
   const [selectedGallineroId, setSelectedGallineroId] = React.useState<string | null>(null);
   const [produccionConsumptionFocus, setProduccionConsumptionFocus] =
     React.useState<ProduccionConsumptionFocus | null>(null);
-  const { role: profileRole } = useAuth();
-  const accessRole = normalizeAppRole(profileRole);
+  const { role: accessRole } = useRole();
 
   React.useEffect(() => {
     if (!canAccessPage(accessRole, currentPage)) {
-      setCurrentPage('dashboard');
+      setCurrentPage(defaultPageForRole(accessRole));
     }
   }, [currentPage, accessRole]);
 
