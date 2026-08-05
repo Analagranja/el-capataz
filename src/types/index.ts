@@ -140,6 +140,11 @@ export interface Expense {
   packaging_quantity?: number | null;
   packaging_item_key?: PackagingItemKey | null;
   total_price: number;
+  /**
+   * Meses de prorrateo para el reporte de costo (Estadísticas).
+   * Default 1. Solo aplica a gastos que no son Alimento ni Maples / Packaging.
+   */
+  amortization_months?: number;
   gallinero_id?: string | null;
   /** Nombre del gallinero (join virtual, no columna en `expenses`) */
   gallinero_name?: string | null;

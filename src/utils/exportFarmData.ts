@@ -1,6 +1,11 @@
-import type { Customer, Expense, ProductionRecord, Sale } from '../types';
+import type { Customer, Expense, FeedConsumptionMonthly, ProductionRecord, Sale } from '../types';
 import { formatArs } from './formatCurrency';
 import { boundsForYearMonthFilter } from './statsPeriod';
+import {
+  computeMonthProductionCost,
+  computePeriodProductionCost,
+  monthsForYearMonthFilter,
+} from './productionCost';
 
 function escapeHtml(s: string): string {
   return String(s ?? '')
@@ -137,7 +142,8 @@ function eggsSoldAsUnits(sale: Sale): number {
 function buildMonthlySummaryRows(
   sales: Sale[],
   production: ProductionRecord[],
-  expenses: Expense[],
+  costExpenses: Expense[],
+  consumptions: FeedConsumptionMonthly[],
   fromYmd: string,
   toYmd: string
 ): Array<{
@@ -148,14 +154,18 @@ function buildMonthlySummaryRows(
   precioPromedioHuevo: number;
   ventas: number;
   gastosAlimento: number;
+  gastosMaples: number;
   gastosOtros: number;
   gastos: number;
   ganancia: number;
 }> {
   const from = fromYmd.slice(0, 10);
   const to = toYmd.slice(0, 10);
-  const months = collectMonthsWithActivity(sales, production, expenses, from, to);
-  const rows = months.map((ym) => {
+  const year = Number(from.slice(0, 4));
+  const months = monthsForYearMonthFilter(year, '', new Date(`${to}T12:00:00`));
+
+  const rows = months.map(({ year: y, month: m }) => {
+    const ym = `${y}-${String(m).padStart(2, '0')}`;
     const huevos = production
       .filter((p) => ymFromYmd(p.date) === ym && dateInExportRange(p.date, from, to))
       .reduce((sum, p) => sum + safeMoney(p.eggs_count), 0);
@@ -165,17 +175,8 @@ function buildMonthlySummaryRows(
     const ventas = monthSales.reduce((sum, s) => sum + safeMoney(s.total_price), 0);
     const huevosVendidos = monthSales.reduce((sum, s) => sum + eggsSoldAsUnits(s), 0);
     const precioPromedioHuevo = averagePricePerEgg(ventas, huevosVendidos);
-    const monthExpenses = expenses.filter(
-      (e) => ymFromYmd(e.date) === ym && dateInExportRange(e.date, from, to)
-    );
-    const gastosAlimento = monthExpenses
-      .filter((e) => e.description === 'Alimento')
-      .reduce((sum, e) => sum + safeMoney(e.total_price), 0);
-    const gastosOtros = monthExpenses
-      .filter((e) => e.description !== 'Alimento')
-      .reduce((sum, e) => sum + safeMoney(e.total_price), 0);
-    const gastosTotales = gastosAlimento + gastosOtros;
-    const ganancia = ventas - gastosTotales;
+    const monthCost = computeMonthProductionCost(y, m, costExpenses, sales, consumptions);
+    const ganancia = ventas - monthCost.total;
     return {
       ym,
       label: monthLabelEs(ym),
@@ -183,14 +184,19 @@ function buildMonthlySummaryRows(
       huevosVendidos,
       precioPromedioHuevo,
       ventas,
-      gastosAlimento,
-      gastosOtros,
-      gastos: gastosTotales,
+      gastosAlimento: monthCost.alimento,
+      gastosMaples: monthCost.maples,
+      gastosOtros: monthCost.otros,
+      gastos: monthCost.total,
       ganancia: Number.isFinite(ganancia) ? ganancia : 0,
     };
   });
   return rows.filter(
-    (r) => r.huevos !== 0 || r.huevosVendidos !== 0 || r.ventas !== 0 || r.gastos !== 0
+    (r) =>
+      r.huevos !== 0 ||
+      r.huevosVendidos !== 0 ||
+      r.ventas !== 0 ||
+      r.gastos !== 0
   );
 }
 
@@ -202,10 +208,16 @@ export function downloadSalesAndProductionExcel(options: {
   sales: Sale[];
   production: ProductionRecord[];
   expenses: Expense[];
-  /** Resumen mensual: año calendario `summaryYear` (siempre “Todos los meses” de ese año en BD). */
+  /** Gastos con lookback para promedios y prorrateo del período filtrado. */
+  costExpenses: Expense[];
+  periodConsumptions: FeedConsumptionMonthly[];
+  periodYear: string;
+  periodMonth: string;
+  /** Resumen mensual: año calendario `summaryYear`. */
   summarySales: Sale[];
   summaryProduction: ProductionRecord[];
-  summaryExpenses: Expense[];
+  summaryCostExpenses: Expense[];
+  summaryConsumptions: FeedConsumptionMonthly[];
   summaryYear: string;
   gallineroNameById: Map<string, string>;
   fromLabel: string;
@@ -215,9 +227,14 @@ export function downloadSalesAndProductionExcel(options: {
     sales,
     production,
     expenses,
+    costExpenses,
+    periodConsumptions,
+    periodYear,
+    periodMonth,
     summarySales,
     summaryProduction,
-    summaryExpenses,
+    summaryCostExpenses,
+    summaryConsumptions,
     summaryYear,
     gallineroNameById,
     fromLabel,
@@ -268,25 +285,31 @@ export function downloadSalesAndProductionExcel(options: {
       <td>${escapeHtml(e.date)}</td>
       <td>${escapeHtml(e.description)}</td>
       <td>${escapeHtml(e.gallinero_name || 'General')}</td>
+      <td>${e.amortization_months != null && e.amortization_months > 1 ? e.amortization_months : 1}</td>
       ${excelTextMoneyTd(safeMoney(e.total_price))}
     </tr>`
     )
     .join('');
 
+  const periodMonths = monthsForYearMonthFilter(Number(periodYear), periodMonth);
+  const periodCost = computePeriodProductionCost(
+    periodMonths,
+    costExpenses,
+    sales,
+    periodConsumptions
+  );
   const totalVentasPeriodo = sales.reduce((s, v) => s + safeMoney(v.total_price), 0);
-  const totalAlimentoPeriodo = expenses
-    .filter((e) => e.description === 'Alimento')
-    .reduce((s, e) => s + safeMoney(e.total_price), 0);
-  const totalOtrosPeriodo = expenses
-    .filter((e) => e.description !== 'Alimento')
-    .reduce((s, e) => s + safeMoney(e.total_price), 0);
-  const totalEgresosPeriodo = totalAlimentoPeriodo + totalOtrosPeriodo;
+  const totalAlimentoPeriodo = periodCost.alimento;
+  const totalMaplesPeriodo = periodCost.maples;
+  const totalOtrosPeriodo = periodCost.otros;
+  const totalEgresosPeriodo = periodCost.total;
   const resultadoPeriodo = totalVentasPeriodo - totalEgresosPeriodo;
 
   const monthlyRows = buildMonthlySummaryRows(
     summarySales,
     summaryProduction,
-    summaryExpenses,
+    summaryCostExpenses,
+    summaryConsumptions,
     summaryBounds.fromYmd,
     summaryBounds.toYmd
   );
@@ -297,6 +320,7 @@ export function downloadSalesAndProductionExcel(options: {
   const totalHuevosVendidos = monthlyRows.reduce((s, r) => s + r.huevosVendidos, 0);
   const totalVentas = monthlyRows.reduce((s, r) => s + r.ventas, 0);
   const totalGastosAlimento = monthlyRows.reduce((s, r) => s + r.gastosAlimento, 0);
+  const totalGastosMaples = monthlyRows.reduce((s, r) => s + r.gastosMaples, 0);
   const totalGastosOtros = monthlyRows.reduce((s, r) => s + r.gastosOtros, 0);
   const totalGastos = monthlyRows.reduce((s, r) => s + r.gastos, 0);
   const totalGanancia = totalVentas - totalGastos;
@@ -304,18 +328,18 @@ export function downloadSalesAndProductionExcel(options: {
 
   const monthlyBody =
     monthlyRows.length === 0
-      ? `<tr><td colspan="9">Sin meses con datos en el año ${escapeHtml(summaryYear)} (${escapeHtml(sumFrom)} a ${escapeHtml(sumTo)}).</td></tr>`
+      ? `<tr><td colspan="10">Sin meses con datos en el año ${escapeHtml(summaryYear)} (${escapeHtml(sumFrom)} a ${escapeHtml(sumTo)}).</td></tr>`
       : monthlyRows
           .map(
             (r) =>
-              `<tr><td>${escapeHtml(r.label)}</td><td>${r.huevos}</td><td>${r.huevosVendidos}</td>${excelTextMoneyTd(r.precioPromedioHuevo)}${excelTextMoneyTd(r.ventas)}${excelTextMoneyTd(r.gastosAlimento)}${excelTextMoneyTd(r.gastosOtros)}${excelTextMoneyTd(r.gastos)}${excelTextMoneyTd(r.ganancia)}</tr>`
+              `<tr><td>${escapeHtml(r.label)}</td><td>${r.huevos}</td><td>${r.huevosVendidos}</td>${excelTextMoneyTd(r.precioPromedioHuevo)}${excelTextMoneyTd(r.ventas)}${excelTextMoneyTd(r.gastosAlimento)}${excelTextMoneyTd(r.gastosMaples)}${excelTextMoneyTd(r.gastosOtros)}${excelTextMoneyTd(r.gastos)}${excelTextMoneyTd(r.ganancia)}</tr>`
           )
           .join('');
 
   const totalRow =
     monthlyRows.length === 0
       ? ''
-      : `<tr style="font-weight:bold;background-color:#f3f4f6;"><td>Total Acumulado</td><td>${totalHuevos}</td><td>${totalHuevosVendidos}</td>${excelTextMoneyTd(precioPromedioHuevoAcumulado)}${excelTextMoneyTd(totalVentas)}${excelTextMoneyTd(totalGastosAlimento)}${excelTextMoneyTd(totalGastosOtros)}${excelTextMoneyTd(totalGastos)}${excelTextMoneyTd(totalGanancia)}</tr>`;
+      : `<tr style="font-weight:bold;background-color:#f3f4f6;"><td>Total Acumulado</td><td>${totalHuevos}</td><td>${totalHuevosVendidos}</td>${excelTextMoneyTd(precioPromedioHuevoAcumulado)}${excelTextMoneyTd(totalVentas)}${excelTextMoneyTd(totalGastosAlimento)}${excelTextMoneyTd(totalGastosMaples)}${excelTextMoneyTd(totalGastosOtros)}${excelTextMoneyTd(totalGastos)}${excelTextMoneyTd(totalGanancia)}</tr>`;
 
   const html = `<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
@@ -325,7 +349,7 @@ export function downloadSalesAndProductionExcel(options: {
 </head>
 <body>
   <p><strong>El Capataz</strong> — Detalle de ventas y producción: ${escapeHtml(fromLabel)} a ${escapeHtml(toLabel)} (filtro Año/Mes en Estadísticas).</p>
-  <p style="font-size:12px;color:#333;"><strong>Resumen mensual:</strong> año calendario ${escapeHtml(summaryYear)}, del ${escapeHtml(summaryBounds.fromYmd)} al ${escapeHtml(summaryBounds.toYmd)}. Solo aparecen meses con al menos un registro y con totales distintos de cero; el filtro de mes <em>no</em> afecta esta tabla.</p>
+  <p style="font-size:12px;color:#333;"><strong>Resumen mensual:</strong> año calendario ${escapeHtml(summaryYear)}, del ${escapeHtml(summaryBounds.fromYmd)} al ${escapeHtml(summaryBounds.toYmd)}. Costos de producción (alimento consumido, maples usados, otros prorrateados). El filtro de mes <em>no</em> afecta esta tabla.</p>
   <h2>Resumen Financiero — ${escapeHtml(fromLabel)} a ${escapeHtml(toLabel)}</h2>
   <table border="1" cellspacing="0" cellpadding="6">
     <thead>
@@ -347,14 +371,18 @@ export function downloadSalesAndProductionExcel(options: {
       </tr>
       <tr><td colspan="2"></td></tr>
       <tr style="background-color:#fee2e2;font-weight:bold;">
-        <td>EGRESOS</td><td></td>
+        <td>EGRESOS (costo de producción)</td><td></td>
       </tr>
       <tr>
-        <td style="padding-left:20px">Alimento</td>
+        <td style="padding-left:20px">Alimento (consumido)</td>
         ${excelTextMoneyTd(totalAlimentoPeriodo)}
       </tr>
       <tr>
-        <td style="padding-left:20px">Otros gastos</td>
+        <td style="padding-left:20px">Maples / packaging (usado)</td>
+        ${excelTextMoneyTd(totalMaplesPeriodo)}
+      </tr>
+      <tr>
+        <td style="padding-left:20px">Otros gastos (prorrateados)</td>
         ${excelTextMoneyTd(totalOtrosPeriodo)}
       </tr>
       <tr style="font-weight:bold;">
@@ -387,14 +415,14 @@ export function downloadSalesAndProductionExcel(options: {
     <tbody>${alimentoGastosRows || '<tr><td colspan="5">Sin registros</td></tr>'}</tbody>
   </table>
   <br/><br/>
-  <h2>Otros Gastos</h2>
+  <h2>Otros Gastos (caja)</h2>
   <table border="1" cellspacing="0" cellpadding="4">
-    <thead><tr><th>Fecha</th><th>Categoría</th><th>Gallinero</th><th>Total</th></tr></thead>
-    <tbody>${otrosGastosRows || '<tr><td colspan="4">Sin registros</td></tr>'}</tbody>
+    <thead><tr><th>Fecha</th><th>Categoría</th><th>Gallinero</th><th>Meses amort.</th><th>Total</th></tr></thead>
+    <tbody>${otrosGastosRows || '<tr><td colspan="5">Sin registros</td></tr>'}</tbody>
   </table>
   <br/><br/>
   <h2>Resumen Mensual</h2>
-  <p style="font-size:11px;color:#555;"><strong>Total Huevos Vendidos</strong> = equivalente en huevos (Maple 30, Docena 12, Media docena 6 por unidad). <strong>Precio Promedio por Huevo</strong> = ventas del mes ÷ huevos vendidos del mes. <strong>Ganancia ($)</strong> = ventas del mes − gastos del mes (alimento + otros). <strong>Total Acumulado</strong> = suma de las filas mensuales mostradas. Consulta en base: fecha &lt; día siguiente al fin del rango (incluye todo el último día). Los importes se exportan como texto ($ y dos decimales) para Excel regional.</p>
+  <p style="font-size:11px;color:#555;"><strong>Total Huevos Vendidos</strong> = equivalente en huevos. <strong>Gastos</strong> = costo de producción del mes (alimento consumido + maples usados + otros prorrateados). <strong>Ganancia ($)</strong> = ventas − gastos.</p>
   <table border="1" cellspacing="0" cellpadding="4">
     <thead>
       <tr>
@@ -404,6 +432,7 @@ export function downloadSalesAndProductionExcel(options: {
         <th>Precio Promedio por Huevo</th>
         <th>Total Ventas del mes</th>
         <th>Gastos Alimento</th>
+        <th>Maples</th>
         <th>Otros Gastos</th>
         <th>Total Gastos</th>
         <th>Ganancia ($)</th>

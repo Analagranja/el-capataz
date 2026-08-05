@@ -24,7 +24,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Select from '../components/ui/Select';
-import { Download } from 'lucide-react';
+import { Download, AlertTriangle } from 'lucide-react';
 import { downloadSalesAndProductionExcel } from '../utils/exportFarmData';
 import { computeMonthToDateTotals } from '../utils/monthToDateFinance';
 import {
@@ -34,6 +34,12 @@ import {
   todayLocalYmdParts,
 } from '../utils/statsPeriod';
 import { formatArs } from '../utils/formatCurrency';
+import {
+  computeMonthProductionCost,
+  computePeriodProductionCost,
+  expenseLookbackFromYmd,
+  monthsForYearMonthFilter,
+} from '../utils/productionCost';
 
 const EGGS_PER_SALE_TYPE: Record<Sale['type'], number> = {
   maple: 30,
@@ -74,6 +80,9 @@ export default function Estadisticas() {
   const [summaryConsumptions, setSummaryConsumptions] = React.useState<FeedConsumptionMonthly[]>([]);
   const [feedConsumption, setFeedConsumption] = React.useState<FeedConsumptionMonthly | null>(null);
   const [feedConsumptionLoading, setFeedConsumptionLoading] = React.useState(false);
+  const [periodConsumptions, setPeriodConsumptions] = React.useState<FeedConsumptionMonthly[]>([]);
+  const [costExpenses, setCostExpenses] = React.useState<Expense[]>([]);
+  const [summaryCostExpenses, setSummaryCostExpenses] = React.useState<Expense[]>([]);
   const [summaryLoading, setSummaryLoading] = React.useState(true);
   const [loading, setLoading] = React.useState(true);
   const [exporting, setExporting] = React.useState(false);
@@ -109,19 +118,24 @@ export default function Estadisticas() {
         toY = todayY;
       }
 
-      const [productionData, salesData, expensesData, eventsData, feedLogsData] = await Promise.all([
-        productionService.getAllRange(organizationId, fromY, toY),
-        salesService.getAllRange(organizationId, fromY, toY),
-        expensesService.getAllRange(organizationId, fromY, toY),
-        eventsService.getAllRange(organizationId, fromY, toY),
-        feedLogsService.getAllRange(organizationId, fromY, toY),
-      ]);
+      const [productionData, salesData, expensesData, eventsData, feedLogsData, consumptionsData, costExpensesData] =
+        await Promise.all([
+          productionService.getAllRange(organizationId, fromY, toY),
+          salesService.getAllRange(organizationId, fromY, toY),
+          expensesService.getAllRange(organizationId, fromY, toY),
+          eventsService.getAllRange(organizationId, fromY, toY),
+          feedLogsService.getAllRange(organizationId, fromY, toY),
+          feedConsumptionMonthlyService.getAllByYear(organizationId, y),
+          expensesService.getAllRange(organizationId, expenseLookbackFromYmd(y), toY),
+        ]);
 
       setProduction(productionData);
       setSales(salesData);
       setExpenses(expensesData);
       setEvents(eventsData);
       setFeedLogs(feedLogsData);
+      setPeriodConsumptions(consumptionsData);
+      setCostExpenses(costExpensesData);
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
@@ -176,12 +190,14 @@ export default function Estadisticas() {
         const { fromYmd, toYmd } = boundsForCalendarYear(sy);
 
         // Cargas independientes: un fallo (p. ej. expenses) no debe borrar kg declarados.
-        const [prodResult, saleResult, expResult, consumptionResult] = await Promise.allSettled([
-          productionService.getAllRange(organizationId, fromYmd, toYmd),
-          salesService.getAllRange(organizationId, fromYmd, toYmd),
-          expensesService.getAllRange(organizationId, fromYmd, toYmd),
-          feedConsumptionMonthlyService.getAllByYear(organizationId, sy),
-        ]);
+        const [prodResult, saleResult, expResult, consumptionResult, costExpResult] =
+          await Promise.allSettled([
+            productionService.getAllRange(organizationId, fromYmd, toYmd),
+            salesService.getAllRange(organizationId, fromYmd, toYmd),
+            expensesService.getAllRange(organizationId, fromYmd, toYmd),
+            feedConsumptionMonthlyService.getAllByYear(organizationId, sy),
+            expensesService.getAllRange(organizationId, expenseLookbackFromYmd(sy), toYmd),
+          ]);
 
         if (cancelled) return;
 
@@ -207,6 +223,12 @@ export default function Estadisticas() {
         else {
           console.error('Error loading summary feed consumption:', consumptionResult.reason);
           setSummaryConsumptions([]);
+        }
+
+        if (costExpResult.status === 'fulfilled') setSummaryCostExpenses(costExpResult.value);
+        else {
+          console.error('Error loading summary cost expenses:', costExpResult.reason);
+          setSummaryCostExpenses([]);
         }
       } catch (error) {
         console.error('Error loading monthly summary:', error);
@@ -364,24 +386,37 @@ export default function Estadisticas() {
   const periodLabel = selectedMonth
     ? `${MONTH_NAMES[Number(selectedMonth) - 1]} ${activeYear}`
     : `Año ${activeYear}`;
-  const periodFinance = computeMonthToDateTotals(
-    filteredSales,
-    filteredExpenses,
-    periodBounds.fromYmd,
-    periodBounds.toYmd
-  );
-
   const totalVentasPeriodo = filteredSales.reduce((sum, s) => sum + s.total_price, 0);
-  const gastosAlimentoPeriodo = filteredExpenses
-    .filter((e) => e.description === 'Alimento')
-    .reduce((sum, e) => sum + e.total_price, 0);
-  const gastosOtrosPeriodo = filteredExpenses
-    .filter((e) => e.description !== 'Alimento')
-    .reduce((sum, e) => sum + e.total_price, 0);
-  const totalEgresosPeriodo = gastosAlimentoPeriodo + gastosOtrosPeriodo;
+  const periodMonths = monthsForYearMonthFilter(Number(activeYear), selectedMonth);
+  const periodCost = computePeriodProductionCost(
+    periodMonths,
+    costExpenses,
+    filteredSales,
+    periodConsumptions
+  );
+  const gastosAlimentoPeriodo = periodCost.alimento;
+  const gastosMaplesPeriodo = periodCost.maples;
+  const gastosOtrosPeriodo = periodCost.otros;
+  const totalEgresosPeriodo = periodCost.total;
   const resultadoPeriodo = totalVentasPeriodo - totalEgresosPeriodo;
+  // Resumen financiero siempre a nivel granja (el filtro de gallinero no aplica acá).
+  const financeEggsProduced = production
+    .filter((p) => dateMatchesFilter(p.date))
+    .reduce((sum, p) => sum + p.eggs_count, 0);
   const margenPorHuevo = totalEggsSold > 0 ? resultadoPeriodo / totalEggsSold : null;
-  const costoPorHuevo = totalEggsProduced > 0 ? totalEgresosPeriodo / totalEggsProduced : null;
+  const costoPorHuevo =
+    financeEggsProduced > 0 ? totalEgresosPeriodo / financeEggsProduced : null;
+  const periodFinance = {
+    ...computeMonthToDateTotals(
+      filteredSales,
+      filteredExpenses,
+      periodBounds.fromYmd,
+      periodBounds.toYmd
+    ),
+    // Ganancia del resumen financiero alineada al costo de producción (no caja).
+    gananciaDelMes: resultadoPeriodo,
+    netoDelMes: resultadoPeriodo,
+  };
 
   const declaredKg = feedConsumption?.kg_consumed ?? null;
   const declaredHens = feedConsumption?.hens_snapshot ?? null;
@@ -406,14 +441,20 @@ export default function Estadisticas() {
 
     const prodM = summaryProduction.filter((p) => p.date.startsWith(prefix));
     const saleM = summarySales.filter((s) => s.date.startsWith(prefix));
-    const expM = summaryExpenses.filter((e) => e.date.startsWith(prefix));
     const totalHuevosMes = prodM.reduce((sum, p) => sum + p.eggs_count, 0);
     const huevosVendidosMes = saleM.reduce((sum, s) => {
       const eggsByType = EGGS_PER_SALE_TYPE[s.type] || 0;
       return sum + s.quantity * eggsByType;
     }, 0);
     const netoMes = saleM.reduce((sum, s) => sum + (Number(s.total_price) || 0), 0);
-    const gastosMes = expM.reduce((sum, e) => sum + (Number(e.total_price) || 0), 0);
+    const monthCost = computeMonthProductionCost(
+      summaryCalendarYear,
+      m,
+      summaryCostExpenses,
+      summarySales,
+      summaryConsumptions
+    );
+    const gastosMes = monthCost.total;
     const gananciaMes = netoMes - gastosMes;
     const monthConsumptions = summaryConsumptions.filter((c) => c.month === m);
     // Preferir declaración a nivel org (gallinero_id null); si no hay, sumar por gallinero.
@@ -490,16 +531,30 @@ export default function Estadisticas() {
         saleRows,
         prodRows,
         expenseRows,
+        costExpenseRows,
+        periodConsumptionRows,
         saleSummaryRows,
         prodSummaryRows,
-        expenseSummaryRows,
+        costExpenseSummaryRows,
+        consumptionSummaryRows,
       ] = await Promise.all([
         salesService.getAllRange(organizationId, detail.fromYmd, detail.toYmd),
         productionService.getAllRange(organizationId, detail.fromYmd, detail.toYmd),
         expensesService.getAllRange(organizationId, detail.fromYmd, detail.toYmd),
+        expensesService.getAllRange(
+          organizationId,
+          expenseLookbackFromYmd(Number(activeYear)),
+          detail.toYmd
+        ),
+        feedConsumptionMonthlyService.getAllByYear(organizationId, Number(activeYear)),
         salesService.getAllRange(organizationId, summary.fromYmd, summary.toYmd),
         productionService.getAllRange(organizationId, summary.fromYmd, summary.toYmd),
-        expensesService.getAllRange(organizationId, summary.fromYmd, summary.toYmd),
+        expensesService.getAllRange(
+          organizationId,
+          expenseLookbackFromYmd(Number(activeYear)),
+          summary.toYmd
+        ),
+        feedConsumptionMonthlyService.getAllByYear(organizationId, Number(activeYear)),
       ]);
 
       const gallineroNameById = new Map(gallineros.map((g) => [g.id, g.name]));
@@ -507,9 +562,14 @@ export default function Estadisticas() {
         sales: saleRows,
         production: prodRows,
         expenses: expenseRows,
+        costExpenses: costExpenseRows,
+        periodConsumptions: periodConsumptionRows,
+        periodYear: activeYear,
+        periodMonth: selectedMonth,
         summarySales: saleSummaryRows,
         summaryProduction: prodSummaryRows,
-        summaryExpenses: expenseSummaryRows,
+        summaryCostExpenses: costExpenseSummaryRows,
+        summaryConsumptions: consumptionSummaryRows,
         summaryYear: activeYear,
         gallineroNameById,
         fromLabel: detail.fromYmd,
@@ -610,6 +670,12 @@ export default function Estadisticas() {
         <h3 className="text-lg font-semibold text-gray-900 mb-4">
           Resumen Financiero — {periodLabel}
         </h3>
+        {selectedGallinero ? (
+          <p className="mb-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-950">
+            Este bloque es de <strong>toda la granja</strong>. El filtro de gallinero solo afecta
+            producción y gráficos de arriba.
+          </p>
+        ) : null}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-3">
             <div className="flex justify-between items-center py-2 border-b border-gray-100">
@@ -617,19 +683,59 @@ export default function Estadisticas() {
               <span className="font-semibold text-green-700">{formatArs(totalVentasPeriodo)}</span>
             </div>
             <div className="flex justify-between items-center py-1 pl-4">
-              <span className="text-sm text-gray-600">Alimento</span>
+              <span className="text-sm text-gray-600">Alimento <span className="text-gray-400">(consumido)</span></span>
               <span className="text-sm tabular-nums text-gray-800">
                 {formatArs(gastosAlimentoPeriodo)}
               </span>
             </div>
             <div className="flex justify-between items-center py-1 pl-4">
-              <span className="text-sm text-gray-600">Otros gastos</span>
+              <span className="text-sm text-gray-600">Maples / packaging <span className="text-gray-400">(usado)</span></span>
+              <span className="text-sm tabular-nums text-gray-800">
+                {formatArs(gastosMaplesPeriodo)}
+              </span>
+            </div>
+            <div className="flex justify-between items-center py-1 pl-4">
+              <span className="text-sm text-gray-600">Otros gastos <span className="text-gray-400">(prorrateados)</span></span>
               <span className="text-sm tabular-nums text-gray-800">{formatArs(gastosOtrosPeriodo)}</span>
             </div>
             <div className="flex justify-between items-center py-2 border-t border-gray-200">
               <span className="text-sm font-medium text-gray-700">Total egresos</span>
               <span className="font-semibold text-red-700">{formatArs(totalEgresosPeriodo)}</span>
             </div>
+            {(periodCost.warnings.missingFeedConsumption ||
+              periodCost.warnings.missingFeedUnitCost ||
+              periodCost.warnings.missingMapleUnitCost) && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950 space-y-1">
+                {periodCost.warnings.missingFeedConsumption ? (
+                  <p className="flex gap-1.5">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" aria-hidden />
+                    <span>
+                      Consumo de alimento no declarado
+                      {selectedMonth ? ' este mes' : ' en el período'} — el costo real puede ser
+                      mayor.
+                    </span>
+                  </p>
+                ) : null}
+                {periodCost.warnings.missingFeedUnitCost ? (
+                  <p className="flex gap-1.5">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" aria-hidden />
+                    <span>
+                      Hay consumo de alimento pero no hay compras con kg para calcular el costo
+                      promedio.
+                    </span>
+                  </p>
+                ) : null}
+                {periodCost.warnings.missingMapleUnitCost ? (
+                  <p className="flex gap-1.5">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" aria-hidden />
+                    <span>
+                      Hay ventas de packaging sin compras con cantidad para calcular el costo
+                      promedio.
+                    </span>
+                  </p>
+                ) : null}
+              </div>
+            )}
             <div className="flex justify-between items-center py-3 border-t-2 border-gray-300 bg-gray-50 rounded-lg px-3">
               <span className="font-semibold text-gray-900">Resultado</span>
               <span
@@ -650,13 +756,13 @@ export default function Estadisticas() {
                 <span className="font-medium tabular-nums">{formatArs(avgPricePerEgg)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Costo de producción</span>
+                <span className="text-sm text-gray-600">Costo por huevo puesto</span>
                 <span className="font-medium tabular-nums text-red-600">
                   {costoPorHuevo != null ? formatArs(costoPorHuevo) : '—'}
                 </span>
               </div>
               <div className="flex justify-between border-t border-gray-100 pt-2">
-                <span className="text-sm font-semibold text-gray-700">Margen por huevo</span>
+                <span className="text-sm font-semibold text-gray-700">Margen por huevo vendido</span>
                 <span
                   className={`font-bold tabular-nums ${
                     margenPorHuevo != null && margenPorHuevo >= 0 ? 'text-green-700' : 'text-red-700'
@@ -665,6 +771,9 @@ export default function Estadisticas() {
                   {margenPorHuevo != null ? formatArs(margenPorHuevo) : '—'}
                 </span>
               </div>
+              <p className="text-[11px] text-gray-400 leading-snug">
+                El costo usa huevos puestos; el margen usa huevos vendidos (no se restan entre sí).
+              </p>
             </div>
             {totalEgresosPeriodo === 0 && (
               <p className="text-xs text-gray-400">

@@ -5,6 +5,7 @@ import {
   expenseQuantityWritePayload,
   resolveExpenseQuantityKg,
 } from './expenseQuantity';
+import { normalizeAmortizationMonths } from '../utils/productionCost';
 
 const EXPENSE_SELECT = '*, gallineros(name)';
 /** Fallback sin join ni columnas opcionales nuevas. */
@@ -21,6 +22,10 @@ export type ExpensePackagingFields = {
 export type ExpenseBagsFields = {
   bags_count?: number | null;
   bag_weight_kg?: number | null;
+};
+
+export type ExpenseAmortizationFields = {
+  amortization_months?: number | null;
 };
 
 function gallineroNameFromRow(row: Record<string, unknown>): string | null {
@@ -69,6 +74,7 @@ function mapExpenseRow(row: Record<string, unknown>): Expense {
         : Number(packagingQtyRaw),
     packaging_item_key: normalizePackagingItemKey(row.packaging_item_key),
     total_price: Number(row.total_price ?? 0),
+    amortization_months: normalizeAmortizationMonths(row.amortization_months),
     gallinero_id:
       gallineroIdRaw === null || gallineroIdRaw === undefined
         ? null
@@ -92,6 +98,14 @@ function packagingPayload(
     packaging_quantity: Math.floor(qty),
     packaging_item_key: key,
   };
+}
+
+/** undefined = no tocar; number = guardar (clamp 1–60). */
+function amortizationPayload(
+  amortization?: ExpenseAmortizationFields | null
+): Partial<{ amortization_months: number }> {
+  if (!amortization || amortization.amortization_months == null) return {};
+  return { amortization_months: normalizeAmortizationMonths(amortization.amortization_months) };
 }
 
 /** undefined = no tocar columnas; null/0 = limpiar; >0 = guardar bolsas. */
@@ -124,12 +138,85 @@ function stripOptionalExpenseColumns<T extends Record<string, unknown>>(
 function isMissingColumnError(error: unknown, column: string) {
   if (!error || typeof error !== 'object') return false;
   const e = error as { code?: string; message?: string };
-  return e.code === 'PGRST204' && String(e.message || '').includes(`'${column}'`);
+  const msg = String(e.message || '');
+  const col = `'${column}'`;
+  return (
+    (e.code === 'PGRST204' || e.code === '42703') &&
+    (msg.includes(col) || msg.toLowerCase().includes(column.toLowerCase()))
+  );
+}
+
+/** Extrae nombre de columna faltante desde error PostgREST / Postgres. */
+function missingColumnName(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const e = error as { code?: string; message?: string };
+  const msg = String(e.message || '');
+  if (e.code !== 'PGRST204' && e.code !== '42703') return null;
+  const m = msg.match(/'([a-zA-Z0-9_]+)'/);
+  return m?.[1] ?? null;
 }
 
 function normalizeGallineroId(gallineroId?: string | null): string | null {
   const id = String(gallineroId ?? '').trim();
   return id.length > 0 ? id : null;
+}
+
+async function writeExpenseRow(
+  mode: 'insert' | 'update',
+  organizationId: string,
+  id: string | null,
+  payload: Record<string, unknown>,
+  quantityKg: number
+): Promise<Expense> {
+  const run = async (row: Record<string, unknown>, select: string) => {
+    if (mode === 'insert') {
+      return supabase.from('expenses').insert(row).select(select).single();
+    }
+    return supabase
+      .from('expenses')
+      .update(row)
+      .eq('organization_id', organizationId)
+      .eq('id', id as string)
+      .select(select)
+      .single();
+  };
+
+  let row: Record<string, unknown> = { ...payload };
+  let select = EXPENSE_SELECT;
+  let { data, error } = await run(row, select);
+
+  for (let attempt = 0; attempt < 10 && error; attempt++) {
+    const col = missingColumnName(error);
+    if (col === 'amortization_months') {
+      row = stripOptionalExpenseColumns(row, 'amortization_months');
+    } else if (col === 'bags_count' || col === 'bag_weight_kg') {
+      row = stripOptionalExpenseColumns(row, 'bags_count', 'bag_weight_kg');
+    } else if (col === 'packaging_quantity' || col === 'packaging_item_key') {
+      row = stripOptionalExpenseColumns(row, 'packaging_quantity', 'packaging_item_key');
+      select = EXPENSE_SELECT_CORE;
+    } else if (col === 'gallinero_id') {
+      row = stripOptionalExpenseColumns(row, 'gallinero_id');
+    } else if (col === 'quantity') {
+      row = stripOptionalExpenseColumns(row, 'quantity');
+      row.quantity_kg = quantityKg;
+    } else if (col === 'quantity_kg') {
+      row = stripOptionalExpenseColumns(row, 'quantity_kg');
+      row.quantity = quantityKg;
+    } else if (select === EXPENSE_SELECT) {
+      // Join gallineros u otro fallo de select: reintentar sin embed.
+      select = '*';
+    } else if (select === '*') {
+      select = EXPENSE_SELECT_CORE_WITH_QUANTITY;
+    } else if (select === EXPENSE_SELECT_CORE_WITH_QUANTITY) {
+      select = EXPENSE_SELECT_CORE;
+    } else {
+      break;
+    }
+    ({ data, error } = await run(row, select));
+  }
+
+  if (error) throw error;
+  return mapExpenseRow(data as Record<string, unknown>);
 }
 
 async function selectExpenses(
@@ -199,12 +286,14 @@ export const expensesService = {
     totalPrice: number,
     gallineroId?: string | null,
     packaging?: ExpensePackagingFields,
-    bags?: ExpenseBagsFields | null
+    bags?: ExpenseBagsFields | null,
+    amortization?: ExpenseAmortizationFields | null
   ): Promise<Expense> {
     const packagingFields = packagingPayload(packaging);
     const bagsFields = bagsPayload(bags);
+    const amortFields = amortizationPayload(amortization);
     const qtyFields = expenseQuantityWritePayload(quantityKg);
-    const base = {
+    const payload = {
       organization_id: organizationId,
       expense_date: date,
       description,
@@ -212,98 +301,10 @@ export const expensesService = {
       gallinero_id: normalizeGallineroId(gallineroId ?? null),
       ...packagingFields,
       ...bagsFields,
+      ...amortFields,
+      ...qtyFields,
     };
-
-    let { data, error } = await supabase
-      .from('expenses')
-      .insert({ ...base, ...qtyFields })
-      .select(EXPENSE_SELECT)
-      .single();
-
-    if (isMissingColumnError(error, 'quantity')) {
-      const { quantity: _q, ...rest } = { ...base, ...qtyFields };
-      const retry = await supabase
-        .from('expenses')
-        .insert({ ...rest, quantity_kg: quantityKg })
-        .select(EXPENSE_SELECT)
-        .single();
-      data = retry.data;
-      error = retry.error;
-    }
-
-    if (isMissingColumnError(error, 'quantity_kg')) {
-      const { quantity_kg: _qk, ...rest } = { ...base, ...qtyFields };
-      const retry = await supabase
-        .from('expenses')
-        .insert({ ...rest, quantity: quantityKg })
-        .select(EXPENSE_SELECT)
-        .single();
-      data = retry.data;
-      error = retry.error;
-    }
-
-    if (
-      isMissingColumnError(error, 'packaging_quantity') ||
-      isMissingColumnError(error, 'packaging_item_key')
-    ) {
-      const baseNoPackaging = stripOptionalExpenseColumns(
-        { ...base },
-        'packaging_quantity',
-        'packaging_item_key'
-      );
-      const retry = await supabase
-        .from('expenses')
-        .insert({ ...baseNoPackaging, ...qtyFields })
-        .select(EXPENSE_SELECT_CORE)
-        .single();
-      data = retry.data;
-      error = retry.error;
-      if (isMissingColumnError(error, 'quantity')) {
-        const { quantity: _q, ...rest } = { ...baseNoPackaging, ...qtyFields };
-        const retry2 = await supabase
-          .from('expenses')
-          .insert({ ...rest, quantity_kg: quantityKg })
-          .select(EXPENSE_SELECT_CORE)
-          .single();
-        data = retry2.data;
-        error = retry2.error;
-      }
-      if (isMissingColumnError(error, 'quantity_kg')) {
-        const { quantity_kg: _qk, ...rest } = { ...baseNoPackaging, ...qtyFields };
-        const retry2 = await supabase
-          .from('expenses')
-          .insert({ ...rest, quantity: quantityKg })
-          .select(EXPENSE_SELECT_CORE)
-          .single();
-        data = retry2.data;
-        error = retry2.error;
-      }
-    }
-
-    if (isMissingColumnError(error, 'bags_count') || isMissingColumnError(error, 'bag_weight_kg')) {
-      const baseNoBags = stripOptionalExpenseColumns({ ...base }, 'bags_count', 'bag_weight_kg');
-      const retry = await supabase
-        .from('expenses')
-        .insert({ ...baseNoBags, ...qtyFields })
-        .select(EXPENSE_SELECT)
-        .single();
-      data = retry.data;
-      error = retry.error;
-    }
-
-    if (isMissingColumnError(error, 'gallinero_id')) {
-      const { gallinero_id: _g, ...baseNoGallinero } = base;
-      const retry = await supabase
-        .from('expenses')
-        .insert({ ...baseNoGallinero, ...qtyFields })
-        .select(EXPENSE_SELECT)
-        .single();
-      data = retry.data;
-      error = retry.error;
-    }
-
-    if (error) throw error;
-    return mapExpenseRow(data as Record<string, unknown>);
+    return writeExpenseRow('insert', organizationId, null, payload, quantityKg);
   },
 
   async update(
@@ -315,126 +316,24 @@ export const expensesService = {
     totalPrice: number,
     gallineroId?: string | null,
     packaging?: ExpensePackagingFields,
-    bags?: ExpenseBagsFields | null
+    bags?: ExpenseBagsFields | null,
+    amortization?: ExpenseAmortizationFields | null
   ): Promise<Expense> {
     const packagingFields = packagingPayload(packaging);
     const bagsFields = bagsPayload(bags);
+    const amortFields = amortizationPayload(amortization);
     const qtyFields = expenseQuantityWritePayload(quantityKg);
-    const base = {
+    const payload = {
       expense_date: date,
       description,
       total_price: totalPrice,
       gallinero_id: normalizeGallineroId(gallineroId ?? null),
       ...packagingFields,
       ...bagsFields,
+      ...amortFields,
+      ...qtyFields,
     };
-
-    let { data, error } = await supabase
-      .from('expenses')
-      .update({ ...base, ...qtyFields })
-      .eq('organization_id', organizationId)
-      .eq('id', id)
-      .select(EXPENSE_SELECT)
-      .single();
-
-    if (isMissingColumnError(error, 'quantity')) {
-      const { quantity: _q, ...rest } = { ...base, ...qtyFields };
-      const retry = await supabase
-        .from('expenses')
-        .update({ ...rest, quantity_kg: quantityKg })
-        .eq('organization_id', organizationId)
-        .eq('id', id)
-        .select(EXPENSE_SELECT)
-        .single();
-      data = retry.data;
-      error = retry.error;
-    }
-
-    if (isMissingColumnError(error, 'quantity_kg')) {
-      const { quantity_kg: _qk, ...rest } = { ...base, ...qtyFields };
-      const retry = await supabase
-        .from('expenses')
-        .update({ ...rest, quantity: quantityKg })
-        .eq('organization_id', organizationId)
-        .eq('id', id)
-        .select(EXPENSE_SELECT)
-        .single();
-      data = retry.data;
-      error = retry.error;
-    }
-
-    if (
-      isMissingColumnError(error, 'packaging_quantity') ||
-      isMissingColumnError(error, 'packaging_item_key')
-    ) {
-      const baseNoPackaging = stripOptionalExpenseColumns(
-        { ...base },
-        'packaging_quantity',
-        'packaging_item_key'
-      );
-      const retry = await supabase
-        .from('expenses')
-        .update({ ...baseNoPackaging, ...qtyFields })
-        .eq('organization_id', organizationId)
-        .eq('id', id)
-        .select(EXPENSE_SELECT_CORE)
-        .single();
-      data = retry.data;
-      error = retry.error;
-      if (isMissingColumnError(error, 'quantity_kg')) {
-        const { quantity_kg: _qk, ...rest } = { ...baseNoPackaging, ...qtyFields };
-        const retry2 = await supabase
-          .from('expenses')
-          .update({ ...rest, quantity: quantityKg })
-          .eq('organization_id', organizationId)
-          .eq('id', id)
-          .select(EXPENSE_SELECT_CORE)
-          .single();
-        data = retry2.data;
-        error = retry2.error;
-      }
-    }
-
-    if (isMissingColumnError(error, 'bags_count') || isMissingColumnError(error, 'bag_weight_kg')) {
-      const baseNoBags = stripOptionalExpenseColumns({ ...base }, 'bags_count', 'bag_weight_kg');
-      const retry = await supabase
-        .from('expenses')
-        .update({ ...baseNoBags, ...qtyFields })
-        .eq('organization_id', organizationId)
-        .eq('id', id)
-        .select(EXPENSE_SELECT)
-        .single();
-      data = retry.data;
-      error = retry.error;
-    }
-
-    if (isMissingColumnError(error, 'gallinero_id')) {
-      const { gallinero_id: _g, ...baseNoGallinero } = base;
-      const retry = await supabase
-        .from('expenses')
-        .update({ ...baseNoGallinero, ...qtyFields })
-        .eq('organization_id', organizationId)
-        .eq('id', id)
-        .select(EXPENSE_SELECT)
-        .single();
-      data = retry.data;
-      error = retry.error;
-      if (isMissingColumnError(error, 'quantity_kg')) {
-        const { quantity_kg: _qk, ...rest } = { ...baseNoGallinero, ...qtyFields };
-        const retry2 = await supabase
-          .from('expenses')
-          .update({ ...rest, quantity: quantityKg })
-          .eq('organization_id', organizationId)
-          .eq('id', id)
-          .select(EXPENSE_SELECT)
-          .single();
-        data = retry2.data;
-        error = retry2.error;
-      }
-    }
-
-    if (error) throw error;
-    return mapExpenseRow(data as Record<string, unknown>);
+    return writeExpenseRow('update', organizationId, id, payload, quantityKg);
   },
 
   async delete(organizationId: string, id: string): Promise<void> {

@@ -21,6 +21,7 @@ import {
   DEFAULT_FEED_GRAMS_PER_HEN_DAY,
   estimateDaysFromFeedKg,
 } from '../services/inventoryStockCalc';
+import { normalizeAmortizationMonths } from '../utils/productionCost';
 
 const LAST_BAG_WEIGHT_KEY = 'gastos_alimento_last_bag_weight_kg';
 
@@ -76,6 +77,7 @@ function getDefaultFormData(category = 'Alimento') {
     gallinero_id: null as string | null,
     packaging_quantity: '' as string,
     packaging_item_key: '' as PackagingItemKey | '',
+    amortization_months: 1,
   };
 }
 
@@ -147,6 +149,7 @@ export default function Gastos({ onNavigate }: GastosProps) {
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [formData, setFormData] = React.useState(getDefaultFormData('Alimento'));
+  const [saveError, setSaveError] = React.useState('');
 
   const loadGallineros = async () => {
     if (!organizationId) {
@@ -290,11 +293,13 @@ export default function Gastos({ onNavigate }: GastosProps) {
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setEditingId(null);
+    setSaveError('');
     setFormData(getDefaultFormData(defaultCategoryForTab(activeTab)));
   };
 
   const openNewExpenseModal = () => {
     setEditingId(null);
+    setSaveError('');
     setFormData(getDefaultFormData(defaultCategoryForTab(activeTab)));
     setIsModalOpen(true);
   };
@@ -307,6 +312,7 @@ export default function Gastos({ onNavigate }: GastosProps) {
       expense.bags_count != null &&
       expense.bags_count > 0;
     setEditingId(expense.id);
+    setSaveError('');
     setFormData({
       date: expense.date.slice(0, 10),
       category: cat,
@@ -329,6 +335,7 @@ export default function Gastos({ onNavigate }: GastosProps) {
           ? String(expense.packaging_quantity)
           : '',
       packaging_item_key: expense.packaging_item_key ?? '',
+      amortization_months: normalizeAmortizationMonths(expense.amortization_months),
     });
     setIsModalOpen(true);
   };
@@ -424,6 +431,12 @@ export default function Gastos({ onNavigate }: GastosProps) {
           ? null
           : undefined;
 
+    const amortization =
+      !alimento && !isMaplesPackaging(formData.category)
+        ? { amortization_months: normalizeAmortizationMonths(formData.amortization_months) }
+        : undefined;
+
+    setSaveError('');
     try {
       if (editingId) {
         await expensesService.update(
@@ -435,7 +448,8 @@ export default function Gastos({ onNavigate }: GastosProps) {
           computedTotalPrice,
           formData.gallinero_id ?? null,
           packaging,
-          bags
+          bags,
+          amortization
         );
       } else {
         await expensesService.create(
@@ -446,7 +460,8 @@ export default function Gastos({ onNavigate }: GastosProps) {
           computedTotalPrice,
           formData.gallinero_id ?? null,
           packaging,
-          bags
+          bags,
+          amortization
         );
       }
       if (alimento && formData.unit === 'bolsas' && formData.bag_weight_kg > 0 && typeof window !== 'undefined') {
@@ -457,6 +472,11 @@ export default function Gastos({ onNavigate }: GastosProps) {
       handleCloseModal();
     } catch (error) {
       console.error('Error saving expense:', error);
+      const msg =
+        error && typeof error === 'object' && 'message' in error && typeof (error as { message: unknown }).message === 'string'
+          ? (error as { message: string }).message
+          : 'No se pudo guardar el gasto.';
+      setSaveError(msg);
     }
   };
 
@@ -1008,6 +1028,32 @@ export default function Gastos({ onNavigate }: GastosProps) {
               required
             />
           )}
+
+          {!isAlimentoForm && !isMaplesForm ? (
+            <Input
+              label="¿En cuántos meses se usa?"
+              type="number"
+              step="1"
+              min="1"
+              max="60"
+              value={numberInputValue(formData.amortization_months)}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  amortization_months: normalizeAmortizationMonths(
+                    parseFormInt(e.target.value, 1)
+                  ),
+                })
+              }
+              helperText="Solo afecta Estadísticas; el gasto se registra completo en la fecha de pago. Default 1 = todo en el mes de la compra."
+            />
+          ) : null}
+
+          {saveError ? (
+            <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+              {saveError}
+            </p>
+          ) : null}
 
           <div className="flex gap-2 pt-4">
             <Button variant="primary" type="submit" className="flex-1">
