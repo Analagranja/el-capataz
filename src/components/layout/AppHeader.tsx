@@ -2,6 +2,7 @@ import React from 'react';
 import { Gallinero, type UserRole } from '../../types';
 import { gallinerosService } from '../../services/gallineros';
 import { useAuth } from '../../contexts/AuthContext';
+import { useDashboardMetricsTick } from '../../contexts/DashboardMetricsRefreshContext';
 import { useRole } from '../../hooks/useRole';
 import Select from '../ui/Select';
 import Button from '../ui/Button';
@@ -15,6 +16,7 @@ interface AppHeaderProps {
 export default function AppHeader({ selectedGallineroId, onGallineroChange }: AppHeaderProps) {
   const { organizationId, organizationName, signOut } = useAuth();
   const { actualRole, roleViewOverride, setTemporaryRoleView } = useRole();
+  const gallinerosTick = useDashboardMetricsTick();
   const [gallineros, setGallineros] = React.useState<Gallinero[]>([]);
   const [loading, setLoading] = React.useState(true);
 
@@ -25,22 +27,25 @@ export default function AppHeader({ selectedGallineroId, onGallineroChange }: Ap
       return;
     }
 
+    let cancelled = false;
     const loadGallineros = async () => {
       try {
         const data = await gallinerosService.getAll(organizationId);
-        setGallineros(data);
+        if (!cancelled) setGallineros(data);
       } catch (error) {
         console.error('Error loading gallineros:', error);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
-    setLoading(true);
     loadGallineros();
-  }, [organizationId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [organizationId, gallinerosTick]);
 
-  if (loading) {
+  if (loading && gallineros.length === 0) {
     return (
       <header className="bg-white border-b border-capataz-mint-soft shadow-sm">
         <div className="h-16 px-6 flex items-center justify-between gap-4">

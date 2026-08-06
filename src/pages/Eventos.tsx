@@ -3,6 +3,7 @@ import { Event, EventType, Gallinero } from '../types';
 import { eventsService, eventCalendarDateToDbIso, isSanidadEventType } from '../services/events';
 import { gallinerosService } from '../services/gallineros';
 import { useAuth } from '../contexts/AuthContext';
+import { useBumpDashboardMetrics } from '../contexts/DashboardMetricsRefreshContext';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
@@ -74,6 +75,7 @@ function dateInputValue(iso: string): string {
 
 export default function Eventos({ selectedGallineroId }: EventosProps) {
   const { organizationId } = useAuth();
+  const bumpGallinerosHeader = useBumpDashboardMetrics();
   const [gallineros, setGallineros] = React.useState<Gallinero[]>([]);
   const [events, setEvents] = React.useState<Event[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -260,6 +262,7 @@ export default function Eventos({ selectedGallineroId }: EventosProps) {
         );
       }
       await loadGallineros();
+      bumpGallinerosHeader();
       await loadEvents();
       if (formData.date.length >= 4) {
         const y = formData.date.slice(0, 4);
@@ -288,6 +291,7 @@ export default function Eventos({ selectedGallineroId }: EventosProps) {
       try {
         await eventsService.delete(organizationId, id);
         await loadGallineros();
+        bumpGallinerosHeader();
         await loadEvents();
       } catch (error) {
         console.error('Error deleting event:', error);

@@ -13,7 +13,7 @@ export function DashboardMetricsRefreshProvider({ children }: { children: React.
   );
 }
 
-/** Para que el Panel vuelva a cargar métricas (p. ej. tras guardar en Producción o Gastos). */
+/** Para que el Panel y el select de gallineros del header vuelvan a cargar (p. ej. tras bajas o producción). */
 export function useDashboardMetricsTick(): number {
   const ctx = React.useContext(DashboardMetricsRefreshContext);
   if (!ctx) {

@@ -4,6 +4,7 @@ import { gallinerosService } from '../services/gallineros';
 import { gallineroFlocksService, GallineroFlockInput } from '../services/gallineroFlocks';
 import { mortalityLogsService } from '../services/mortalityLogs';
 import { useAuth } from '../contexts/AuthContext';
+import { useBumpDashboardMetrics } from '../contexts/DashboardMetricsRefreshContext';
 import { useRole } from '../hooks/useRole';
 import { todayLocalYmd } from '../utils/monthToDateFinance';
 import { flockAgeSummary } from '../utils/gallineroFlock';
@@ -243,6 +244,7 @@ function FlockDetailBlock({ flock }: { flock: GallineroFlock }) {
 export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
   const { organizationId } = useAuth();
   const { canManageCoops } = useRole();
+  const bumpGallinerosHeader = useBumpDashboardMetrics();
   const [gallineros, setGallineros] = React.useState<Gallinero[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
@@ -379,6 +381,7 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
         )
       );
       await loadGallineros();
+      bumpGallinerosHeader();
     } catch (error) {
       console.error('Error updating flock:', error);
       setEditingFlocks((prev) =>
@@ -430,6 +433,7 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
       );
       setNewFlockOpen(false);
       await loadGallineros();
+      bumpGallinerosHeader();
       await loadDetailLogs(detailTarget.id);
     } catch (error) {
       console.error('Error creating flock:', error);
@@ -447,6 +451,7 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
     try {
       await gallineroFlocksService.retire(organizationId, flock.id);
       await loadGallineros();
+      bumpGallinerosHeader();
       await loadDetailLogs(detailTarget.id);
     } catch (error) {
       console.error('Error retiring flock:', error);
@@ -522,6 +527,7 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
       );
       setMortalityOpen(false);
       await loadGallineros();
+      bumpGallinerosHeader();
       await loadDetailLogs(detailTarget.id);
     } catch (error) {
       console.error('Error saving mortality:', error);
@@ -544,6 +550,7 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
         await gallinerosService.create(organizationId, formData.name, formData.color);
       }
       loadGallineros();
+      bumpGallinerosHeader();
       handleCloseModal();
     } catch (error) {
       console.error('Error saving gallinero:', error);
@@ -568,6 +575,7 @@ export default function Gallineros({ onRegisterProduction }: GallinerosProps) {
       await gallinerosService.delete(organizationId, deleteTarget.id);
       setDeleteTarget(null);
       await loadGallineros();
+      bumpGallinerosHeader();
     } catch (error) {
       console.error('Error deleting gallinero:', error);
     } finally {
