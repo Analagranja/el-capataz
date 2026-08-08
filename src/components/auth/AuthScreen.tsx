@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sprout, Lock, Mail, Building2, Leaf, Phone } from 'lucide-react';
+import { Sprout, Lock, Mail, Building2, Leaf } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 
 type Mode = 'login' | 'register';
@@ -12,7 +12,6 @@ export default function AuthScreen() {
   const [farmName, setFarmName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [fullName, setFullName] = useState('');
-  const [phone, setPhone] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
@@ -38,19 +37,10 @@ export default function AuthScreen() {
           setBusy(false);
           return;
         }
-        if (!phone.trim()) {
-          setMessage({
-            type: 'err',
-            text: 'Indicá un teléfono / WhatsApp para continuar con el registro.',
-          });
-          setBusy(false);
-          return;
-        }
         const { error, needsEmailConfirmation } = await signUp(email, password, {
           farmName: farmName.trim(),
           ...(inviteOnlyIfTyped !== undefined ? { inviteCode: inviteOnlyIfTyped } : {}),
           fullName: fullName.trim(),
-          phone: phone.trim(),
         });
         if (error) {
           setMessage({ type: 'err', text: error.message });
@@ -108,7 +98,6 @@ export default function AuthScreen() {
                 setMode('login');
                 setMessage(null);
                 setInviteCode('');
-                setPhone('');
               }}
               className={`flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all ${
                 mode === 'login'
@@ -125,7 +114,6 @@ export default function AuthScreen() {
                 setMessage(null);
                 setInviteCode('');
                 setFullName('');
-                setPhone('');
               }}
               className={`flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all ${
                 mode === 'register'
@@ -172,29 +160,6 @@ export default function AuthScreen() {
                   />
                   <p className="mt-1.5 text-xs text-stone-500">
                     Se guarda en tu perfil de la granja para que el equipo te reconozca.
-                  </p>
-                </div>
-                <div className="relative">
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-capataz-mint/90 mb-1.5">
-                    Teléfono / WhatsApp
-                  </label>
-                  <div className="relative">
-                    <Phone
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-capataz-leaf/80"
-                      size={18}
-                    />
-                    <input
-                      type="tel"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      placeholder="Ej: 11 2345 6789"
-                      autoComplete="tel"
-                      required
-                      className="w-full rounded-xl border border-capataz-forest/50 bg-black/20 pl-10 pr-4 py-3 text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-2 focus:ring-capataz-leaf/60 focus:border-capataz-leaf/40"
-                    />
-                  </div>
-                  <p className="mt-1.5 text-xs text-stone-500">
-                    Lo usamos para enviarte alertas importantes de tu granja por WhatsApp.
                   </p>
                 </div>
                 <div className="relative">

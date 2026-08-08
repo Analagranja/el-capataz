@@ -26,7 +26,7 @@ type AuthContextValue = {
   signUp: (
     email: string,
     password: string,
-    opts: { farmName?: string; inviteCode?: string; fullName?: string; phone?: string }
+    opts: { farmName?: string; inviteCode?: string; fullName?: string }
   ) => Promise<{ error: Error | null; needsEmailConfirmation: boolean }>;
   signOut: () => Promise<void>;
   refreshOrganization: () => Promise<void>;
@@ -232,7 +232,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signUp = useCallback(
-    async (email: string, password: string, opts: { farmName?: string; inviteCode?: string; fullName?: string; phone?: string }) => {
+    async (email: string, password: string, opts: { farmName?: string; inviteCode?: string; fullName?: string }) => {
       const inviteRaw = (opts.inviteCode ?? '').trim();
       const invite = inviteRaw ? inviteRaw.toUpperCase() : '';
       const farm = opts.farmName?.trim() ?? '';
@@ -254,10 +254,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (fullName) {
         dataPayload.full_name = fullName;
         dataPayload.fullName = fullName;
-      }
-      const phone = (opts.phone ?? '').trim();
-      if (phone) {
-        dataPayload.phone = phone;
       }
       if (invite) {
         dataPayload.invite_code = invite;

@@ -413,9 +413,6 @@ export default function Dashboard({
             >
               {eggStock.total}
             </p>
-            <p className="text-xs text-gray-500 mt-1 tabular-nums">
-              ≈ {Math.floor(eggStock.total / 30)} maples y {eggStock.total % 30} sueltos
-            </p>
             {eggStock.total < umbralAlerta && (
               <p className="text-xs text-red-500 mt-1">⚠️ Stock bajo</p>
             )}
