@@ -794,7 +794,7 @@ export default function Produccion({
                   ) : null}
                 </div>
                 <div>
-                  <p className="text-sm text-gray-600 mb-1">Alcance (desde hoy)</p>
+                  <p className="text-sm text-gray-600 mb-1">Alcance estimado</p>
                   {feedSnapshot?.daysRemaining == null ? (
                     <p className="text-2xl font-bold text-gray-400">
                       {feedSnapshot?.activeHens === 0 ? 'Sin aves' : '—'}
@@ -802,7 +802,8 @@ export default function Produccion({
                   ) : (
                     (() => {
                       const { daysLabel, untilLabel } = formatFeedReachFromToday(
-                        feedSnapshot.daysRemaining
+                        feedSnapshot.daysRemaining,
+                        feedSnapshot.untilDateYmd
                       );
                       return (
                         <>
@@ -811,7 +812,7 @@ export default function Produccion({
                             <span className="ml-1 text-base font-medium text-gray-500">días</span>
                           </p>
                           <p className="mt-1 text-xs text-gray-500">
-                            Con el stock de hoy · hasta el {untilLabel} aprox.
+                            Hasta el {untilLabel} aprox.
                             {feedSnapshot.gramsPerHenDay > 0
                               ? ` · base ${feedSnapshot.gramsPerHenDay.toFixed(0)} g/ave/día${
                                   feedSnapshot.gramsSource === 'default'

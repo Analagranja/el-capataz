@@ -17,6 +17,8 @@ import {
   estimateDaysFromFeedKg,
   estimateFeedDaysRemaining,
   mapleImpactForSale,
+  resolveFeedReachAnchorDate,
+  daysRemainingFromAnchor,
   saleAffectsPackagingAfterBaseline,
   sumDeclaredFeedConsumptionKg,
   yearMonthOnOrAfter,
@@ -490,6 +492,72 @@ check('feed consumo filtra por mes de baseline', () => {
   assert.equal(sumDeclaredFeedConsumptionKg(rows, '2026-08-03'), 100);
   assert.equal(yearMonthOnOrAfter(2026, 7, '2026-08-03'), false);
   assert.equal(yearMonthOnOrAfter(2026, 8, '2026-08-03'), true);
+});
+
+check('ancla: fecha límite fija y días restantes bajan al pasar un día', () => {
+  // Junio cerrado: 300 kg / 30 d / 100 aves = 100 g/ave/día → 10 kg/día
+  // Stock 62 kg → span 6.2 días desde el ancla
+  const consumptions: FeedConsumptionMonthly[] = [
+    {
+      id: '1',
+      organization_id: 'org',
+      gallinero_id: null,
+      year: 2026,
+      month: 6,
+      kg_consumed: 300,
+      notes: null,
+      hens_snapshot: 100,
+      created_at: '2026-06-01T00:00:00.000Z',
+      updated_at: '2026-06-01T00:00:00.000Z',
+    },
+  ];
+  const anchor = '2026-08-07';
+  const day0 = estimateFeedDaysRemaining(
+    62,
+    consumptions,
+    100,
+    new Date(2026, 7, 7),
+    3,
+    anchor
+  );
+  const day1 = estimateFeedDaysRemaining(
+    62,
+    consumptions,
+    100,
+    new Date(2026, 7, 8),
+    3,
+    anchor
+  );
+  assert.equal(day0.untilDateYmd, day1.untilDateYmd);
+  assert.equal(day0.anchorDateYmd, anchor);
+  assert.ok(day0.daysRemaining != null && Math.abs(day0.daysRemaining - 6.2) < 0.05);
+  assert.ok(day1.daysRemaining != null && Math.abs(day1.daysRemaining - 5.2) < 0.05);
+  assert.ok(day0.untilDateYmd === '2026-08-13');
+});
+
+check('resolveFeedReachAnchorDate: max(baseline, compra, fin mes consumo)', () => {
+  assert.equal(
+    resolveFeedReachAnchorDate({
+      baselineDate: '2026-08-01',
+      purchaseDates: ['2026-08-03', '2026-08-05'],
+      consumptions: [{ year: 2026, month: 7, kg_consumed: 50 }],
+      cutoffYmd: '2026-08-01',
+    }),
+    '2026-08-05'
+  );
+  assert.equal(
+    resolveFeedReachAnchorDate({
+      baselineDate: '2026-08-01',
+      purchaseDates: ['2026-08-05'],
+      consumptions: [{ year: 2026, month: 8, kg_consumed: 50 }],
+      cutoffYmd: '2026-08-01',
+    }),
+    '2026-08-31'
+  );
+});
+
+check('daysRemainingFromAnchor sin aves → null', () => {
+  assert.equal(daysRemainingFromAnchor(100, 117, 0, '2026-08-01'), null);
 });
 
 console.log(`\n${passed} tests passed`);

@@ -13,11 +13,11 @@ import {
   computeEggStock,
   aggregateClosedMonthFeedRates,
   computeFeedStockFromBaseline,
-  computeFeedStockKg,
   computeMapleStock,
   computeMapleStockFromBaseline,
   dateOnOrAfter,
   estimateFeedDaysRemaining,
+  resolveFeedReachAnchorDate,
   saleAffectsPackagingAfterBaseline,
   sumDeclaredFeedConsumptionKg,
   type EggStockItemKey,
@@ -51,6 +51,8 @@ export {
   sumKgForMonthRows,
   estimateDaysFromFeedKg,
   estimateFeedDaysRemaining,
+  resolveFeedReachAnchorDate,
+  daysRemainingFromAnchor,
   formatFeedReachFromToday,
   formatUnknownError,
   availableEggStockForSale,
@@ -94,6 +96,10 @@ export interface FeedInventorySnapshot {
     stockKg: number;
   } | null;
   daysRemaining: number | null;
+  /** Fecha límite estimada anclada al último evento (YYYY-MM-DD). */
+  untilDateYmd: string | null;
+  /** Ancla usada para el estimado (baseline / compra / consumo). */
+  anchorDateYmd: string | null;
   /** g/ave/día usado para estimar días (historial plausible o default 117). */
   gramsPerHenDay: number;
   gramsSource: 'history' | 'default';
@@ -474,12 +480,14 @@ export const inventoryStockService = {
     const cutoff = baseline?.baseline_date ?? null;
 
     let purchasedKg = 0;
+    const purchaseDates: string[] = [];
     for (const row of expenseRows) {
+      const expenseDate = String(row.expense_date ?? '').slice(0, 10);
       if (cutoff) {
-        const expenseDate = String(row.expense_date ?? '').slice(0, 10);
         if (!expenseDate || !dateOnOrAfter(expenseDate, cutoff)) continue;
       }
       purchasedKg += resolveExpenseKg(row);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(expenseDate)) purchaseDates.push(expenseDate);
     }
     const consumedKg = sumDeclaredFeedConsumptionKg(consumptions, cutoff);
     const baselineKg = baseline != null ? baseline.stock_kg : null;
@@ -488,7 +496,20 @@ export const inventoryStockService = {
       (sum, g) => sum + Math.max(0, Math.floor(Number(g.current_count) || 0)),
       0
     );
-    const estimate = estimateFeedDaysRemaining(stockKg, consumptions, activeHens);
+    const anchorDateYmd = resolveFeedReachAnchorDate({
+      baselineDate: baseline?.baseline_date ?? null,
+      purchaseDates,
+      consumptions,
+      cutoffYmd: cutoff,
+    });
+    const estimate = estimateFeedDaysRemaining(
+      stockKg,
+      consumptions,
+      activeHens,
+      new Date(),
+      3,
+      anchorDateYmd
+    );
     const lastClosed = aggregateClosedMonthFeedRates(consumptions, activeHens)[0] ?? null;
     return {
       stockKg,
@@ -498,6 +519,8 @@ export const inventoryStockService = {
         ? { baselineDate: baseline.baseline_date, stockKg: baseline.stock_kg }
         : null,
       daysRemaining: estimate.daysRemaining,
+      untilDateYmd: estimate.untilDateYmd,
+      anchorDateYmd: estimate.anchorDateYmd,
       gramsPerHenDay: estimate.gramsPerHenDay,
       gramsSource: estimate.gramsSource,
       activeHens: estimate.activeHens,

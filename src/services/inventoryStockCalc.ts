@@ -237,6 +237,10 @@ export const MAX_PLAUSIBLE_FEED_GRAMS_PER_HEN_DAY = 160;
 
 export type FeedDaysEstimate = {
   daysRemaining: number | null;
+  /** Fecha límite estimada (YYYY-MM-DD), anclada al último evento real — no a “hoy”. */
+  untilDateYmd: string | null;
+  /** Fecha de referencia del stock (baseline / última compra / último mes de consumo). */
+  anchorDateYmd: string | null;
   /** g/ave/día usado en el estimado */
   gramsPerHenDay: number;
   gramsSource: 'history' | 'default';
@@ -398,20 +402,189 @@ export function estimateDaysFromFeedKg(
   return stock / dailyKg;
 }
 
-/** Días restantes → etiquetas claras “desde hoy” / fecha estimada. */
+/** Días restantes → etiquetas; la fecha límite debe venir anclada (no recalcular desde hoy). */
 export function formatFeedReachFromToday(
   daysRemaining: number,
-  now: Date = new Date()
+  untilDateYmd?: string | null
 ): { daysLabel: string; untilLabel: string } {
   const days = Math.max(0, Number(daysRemaining) || 0);
-  const until = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  until.setDate(until.getDate() + Math.max(0, Math.floor(days)));
-  const untilLabel = until.toLocaleDateString('es-AR', {
+  const untilLabel = untilDateYmd
+    ? formatYmdEsAr(untilDateYmd)
+    : formatYmdEsAr(addFractionalDaysToYmd(localDateToYmd(new Date()), days));
+  return { daysLabel: days.toFixed(1), untilLabel };
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function parseLocalYmd(ymd: string): Date | null {
+  const m = String(ymd ?? '')
+    .trim()
+    .slice(0, 10)
+    .match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return null;
+  const dt = new Date(y, mo - 1, d);
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+  return dt;
+}
+
+function localDateToYmd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function formatYmdEsAr(ymd: string): string {
+  const dt = parseLocalYmd(ymd);
+  if (!dt) return ymd;
+  return dt.toLocaleDateString('es-AR', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
   });
-  return { daysLabel: days.toFixed(1), untilLabel };
+}
+
+/** Último día del mes calendario (month 1–12) como YYYY-MM-DD. */
+export function lastDayOfMonthYmd(year: number, month: number): string {
+  const dt = new Date(year, month, 0);
+  return localDateToYmd(dt);
+}
+
+export function maxYmd(...dates: Array<string | null | undefined>): string | null {
+  const valid = dates
+    .map((d) => String(d ?? '').trim().slice(0, 10))
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+  if (valid.length === 0) return null;
+  return valid.sort()[valid.length - 1] ?? null;
+}
+
+/**
+ * Ancla del alcance de alimento: el más reciente entre línea base,
+ * última compra (Alimento) y fin del último mes con consumo declarado.
+ */
+export function resolveFeedReachAnchorDate(input: {
+  baselineDate?: string | null;
+  purchaseDates?: string[];
+  consumptions?: Array<{ year: number; month: number; kg_consumed?: number }>;
+  /** Si hay baseline, solo cuentan eventos desde esa fecha (inclusive). */
+  cutoffYmd?: string | null;
+}): string | null {
+  const cutoff = input.cutoffYmd ? String(input.cutoffYmd).slice(0, 10) : null;
+  const purchases = (input.purchaseDates ?? [])
+    .map((d) => String(d ?? '').slice(0, 10))
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .filter((d) => !cutoff || dateOnOrAfter(d, cutoff));
+
+  let lastConsumptionEnd: string | null = null;
+  for (const c of input.consumptions ?? []) {
+    if ((Number(c.kg_consumed) || 0) <= 0) continue;
+    if (cutoff && !yearMonthOnOrAfter(c.year, c.month, cutoff)) continue;
+    const end = lastDayOfMonthYmd(c.year, c.month);
+    if (!lastConsumptionEnd || end > lastConsumptionEnd) lastConsumptionEnd = end;
+  }
+
+  return maxYmd(input.baselineDate, ...purchases, lastConsumptionEnd);
+}
+
+/** Suma días (fracción OK) a una fecha local YYYY-MM-DD → YYYY-MM-DD del momento resultante. */
+export function addFractionalDaysToYmd(ymd: string, days: number): string {
+  const base = parseLocalYmd(ymd);
+  if (!base) return String(ymd).slice(0, 10);
+  const ms = base.getTime() + Math.max(0, Number(days) || 0) * MS_PER_DAY;
+  return localDateToYmd(new Date(ms));
+}
+
+/**
+ * Días restantes desde `now` hasta el agotamiento estimado:
+ * until = anchor + (stock / consumo_diario); days = until − hoy.
+ */
+export function daysRemainingFromAnchor(
+  stockKg: number,
+  gramsPerHenDay: number,
+  activeHens: number,
+  anchorDateYmd: string,
+  now: Date = new Date()
+): { daysRemaining: number; untilDateYmd: string; spanDays: number } | null {
+  const spanDays = estimateDaysFromFeedKg(stockKg, gramsPerHenDay, activeHens);
+  if (spanDays == null) return null;
+  const anchor = parseLocalYmd(anchorDateYmd);
+  if (!anchor) return null;
+  const untilMs = anchor.getTime() + spanDays * MS_PER_DAY;
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const daysRemaining = Math.max(0, (untilMs - today.getTime()) / MS_PER_DAY);
+  return {
+    daysRemaining,
+    untilDateYmd: localDateToYmd(new Date(untilMs)),
+    spanDays,
+  };
+}
+
+/**
+ * Días restantes estimados:
+ * consumo_diario_kg = (g/ave/día * aves_activas) / 1000
+ * span = stock_kg / consumo_diario_kg (desde el ancla)
+ * fecha_limite = ancla + span
+ * días_restantes = fecha_limite − hoy
+ *
+ * g/ave/día = promedio de meses cerrados; si no hay, DEFAULT_FEED_GRAMS_PER_HEN_DAY.
+ */
+export function estimateFeedDaysRemaining(
+  stockKg: number,
+  consumptions: FeedConsumptionMonthly[],
+  activeHens: number,
+  now: Date = new Date(),
+  maxClosedMonths = 3,
+  anchorDateYmd: string | null = null
+): FeedDaysEstimate {
+  const hens = Math.max(0, Math.floor(Number(activeHens) || 0));
+  const fromHistory = averageGramsPerHenDayFromClosedMonths(
+    consumptions,
+    hens,
+    now,
+    maxClosedMonths
+  );
+  const gramsPerHenDay = fromHistory ?? DEFAULT_FEED_GRAMS_PER_HEN_DAY;
+  const gramsSource: 'history' | 'default' = fromHistory != null ? 'history' : 'default';
+  const anchor =
+    anchorDateYmd && /^\d{4}-\d{2}-\d{2}$/.test(String(anchorDateYmd).slice(0, 10))
+      ? String(anchorDateYmd).slice(0, 10)
+      : localDateToYmd(now);
+
+  if (!Number.isFinite(stockKg) || stockKg <= 0) {
+    return {
+      daysRemaining: stockKg <= 0 ? 0 : null,
+      untilDateYmd: stockKg <= 0 ? anchor : null,
+      anchorDateYmd: anchor,
+      gramsPerHenDay,
+      gramsSource,
+      activeHens: hens,
+    };
+  }
+
+  const reach = daysRemainingFromAnchor(stockKg, gramsPerHenDay, hens, anchor, now);
+  if (!reach) {
+    return {
+      daysRemaining: null,
+      untilDateYmd: null,
+      anchorDateYmd: anchor,
+      gramsPerHenDay,
+      gramsSource,
+      activeHens: hens,
+    };
+  }
+
+  return {
+    daysRemaining: reach.daysRemaining,
+    untilDateYmd: reach.untilDateYmd,
+    anchorDateYmd: anchor,
+    gramsPerHenDay,
+    gramsSource,
+    activeHens: hens,
+  };
 }
 
 /** Mensaje de error legible desde Postgrest / Error genérico. */
@@ -425,47 +598,6 @@ export function formatUnknownError(error: unknown, fallback: string): string {
   }
   if (typeof error === 'string' && error.trim()) return error.trim();
   return fallback;
-}
-
-/**
- * Días restantes estimados:
- * consumo_diario_kg = (g/ave/día * aves_activas) / 1000
- * días = stock_kg / consumo_diario_kg
- *
- * g/ave/día = promedio de meses cerrados; si no hay, DEFAULT_FEED_GRAMS_PER_HEN_DAY.
- */
-export function estimateFeedDaysRemaining(
-  stockKg: number,
-  consumptions: FeedConsumptionMonthly[],
-  activeHens: number,
-  now: Date = new Date(),
-  maxClosedMonths = 3
-): FeedDaysEstimate {
-  const hens = Math.max(0, Math.floor(Number(activeHens) || 0));
-  const fromHistory = averageGramsPerHenDayFromClosedMonths(
-    consumptions,
-    hens,
-    now,
-    maxClosedMonths
-  );
-  const gramsPerHenDay = fromHistory ?? DEFAULT_FEED_GRAMS_PER_HEN_DAY;
-  const gramsSource: 'history' | 'default' = fromHistory != null ? 'history' : 'default';
-
-  if (!Number.isFinite(stockKg) || stockKg <= 0) {
-    return {
-      daysRemaining: stockKg <= 0 ? 0 : null,
-      gramsPerHenDay,
-      gramsSource,
-      activeHens: hens,
-    };
-  }
-
-  return {
-    daysRemaining: estimateDaysFromFeedKg(stockKg, gramsPerHenDay, hens),
-    gramsPerHenDay,
-    gramsSource,
-    activeHens: hens,
-  };
 }
 
 /** stock disponible para una venta, sumando de vuelta el impacto de la venta en edición. */

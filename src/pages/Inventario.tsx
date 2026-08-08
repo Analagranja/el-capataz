@@ -248,10 +248,13 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
                 </>
               ) : (
                 (() => {
-                  const { daysLabel, untilLabel } = formatFeedReachFromToday(feed.daysRemaining);
+                  const { daysLabel, untilLabel } = formatFeedReachFromToday(
+                    feed.daysRemaining,
+                    feed.untilDateYmd
+                  );
                   return (
                     <>
-                      Al ritmo actual, con el stock de hoy te alcanza aproximadamente{' '}
+                      Al ritmo actual, con el stock estimado te alcanza aproximadamente{' '}
                       <span className="font-semibold tabular-nums">{daysLabel} días</span>
                       {' '}(hasta el {untilLabel} aprox.)
                     </>
