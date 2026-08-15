@@ -16,6 +16,7 @@ import {
   computeMapleStock,
   computeMapleStockFromBaseline,
   dateOnOrAfter,
+  estimateFeedAvailableKgToday,
   estimateFeedDaysRemaining,
   resolveFeedReachAnchorDate,
   saleAffectsPackagingAfterBaseline,
@@ -50,6 +51,7 @@ export {
   sumDeclaredFeedConsumptionKg,
   sumKgForMonthRows,
   estimateDaysFromFeedKg,
+  estimateFeedAvailableKgToday,
   estimateFeedDaysRemaining,
   resolveFeedReachAnchorDate,
   daysRemainingFromAnchor,
@@ -90,6 +92,14 @@ export interface FeedInventorySnapshot {
   purchasedKg: number;
   /** Consumo declarado en el período relevante (sin doblecontar org + gallinero). */
   consumedKg: number;
+  /**
+   * Saldo proyectado para mostrar hoy: descuenta el consumo diario estimado
+   * de períodos no corregidos todavía por una declaración mensual real.
+   * No reemplaza `stockKg`, que conserva el saldo contable/declarado.
+   */
+  estimatedStockKg: number;
+  /** Kg descontados visualmente por proyección; no se persisten. */
+  projectedConsumedKg: number;
   /** Null = sin apertura; cálculo histórico completo (retrocompatible). */
   baseline: {
     baselineDate: string;
@@ -502,19 +512,42 @@ export const inventoryStockService = {
       consumptions,
       cutoffYmd: cutoff,
     });
-    const estimate = estimateFeedDaysRemaining(
-      stockKg,
+    const rateEstimate = estimateFeedDaysRemaining(
+      stockKg > 0 ? stockKg : 1,
       consumptions,
       activeHens,
       new Date(),
       3,
       anchorDateYmd
     );
+    const availableEstimate = estimateFeedAvailableKgToday({
+      baseline: baseline
+        ? { date: baseline.baseline_date, stockKg: baseline.stock_kg }
+        : null,
+      purchases: expenseRows.map((row) => ({
+        date: String(row.expense_date ?? '').slice(0, 10),
+        kg: resolveExpenseKg(row),
+      })),
+      consumptions,
+      gramsPerHenDay: rateEstimate.gramsPerHenDay,
+      activeHens,
+    });
+    // El alcance se calcula desde hoy sobre el saldo visual ya quemado.
+    // Las Estadísticas siguen usando exclusivamente feed_consumption_monthly.
+    const estimate = estimateFeedDaysRemaining(
+      availableEstimate.estimatedKg,
+      consumptions,
+      activeHens,
+      new Date(),
+      3
+    );
     const lastClosed = aggregateClosedMonthFeedRates(consumptions, activeHens)[0] ?? null;
     return {
       stockKg,
       purchasedKg,
       consumedKg,
+      estimatedStockKg: availableEstimate.estimatedKg,
+      projectedConsumedKg: availableEstimate.projectedConsumedKg,
       baseline: baseline
         ? { baselineDate: baseline.baseline_date, stockKg: baseline.stock_kg }
         : null,

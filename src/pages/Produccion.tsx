@@ -780,7 +780,7 @@ export default function Produccion({
                 <div>
                   <p className="text-sm text-gray-600 mb-1">Stock alimento</p>
                   <p className="text-2xl font-bold text-gray-900 tabular-nums">
-                    {feedSnapshot != null ? feedSnapshot.stockKg.toFixed(1) : '—'}
+                    {feedSnapshot != null ? feedSnapshot.estimatedStockKg.toFixed(1) : '—'}
                     {feedSnapshot != null ? (
                       <span className="ml-1 text-base font-medium text-gray-500">kg</span>
                     ) : null}
@@ -792,6 +792,9 @@ export default function Produccion({
                         : `Compras ${feedSnapshot.purchasedKg.toFixed(1)} − Consumo ${feedSnapshot.consumedKg.toFixed(1)}`}
                     </p>
                   ) : null}
+                  <p className="mt-1 text-xs text-amber-700">
+                    Estimado según consumo diario; se ajusta al declarar el consumo mensual real.
+                  </p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-600 mb-1">Alcance estimado</p>

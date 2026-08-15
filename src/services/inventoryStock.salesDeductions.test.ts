@@ -14,6 +14,7 @@ import {
   computeMapleStockFromBaseline,
   dateOnOrAfter,
   eggImpactForSale,
+  estimateFeedAvailableKgToday,
   estimateDaysFromFeedKg,
   estimateFeedDaysRemaining,
   mapleImpactForSale,
@@ -533,6 +534,60 @@ check('ancla: fecha límite fija y días restantes bajan al pasar un día', () =
   assert.ok(day0.daysRemaining != null && Math.abs(day0.daysRemaining - 6.2) < 0.05);
   assert.ok(day1.daysRemaining != null && Math.abs(day1.daysRemaining - 5.2) < 0.05);
   assert.ok(day0.untilDateYmd === '2026-08-13');
+});
+
+check('alimento visual: compra de 45 kg hoy alcanza 2.5 días a 18 kg/día', () => {
+  const now = new Date(2026, 7, 15);
+  const estimate = estimateFeedAvailableKgToday({
+    purchases: [{ date: '2026-08-15', kg: 45 }],
+    consumptions: [],
+    gramsPerHenDay: 120,
+    activeHens: 150,
+    now,
+  });
+  assert.equal(estimate.estimatedKg, 45);
+  assert.equal(estimate.projectedConsumedKg, 0);
+  assert.equal(estimateDaysFromFeedKg(estimate.estimatedKg, 120, 150), 2.5);
+});
+
+check('alimento visual: descuenta el consumo estimado al pasar los días', () => {
+  const estimate = estimateFeedAvailableKgToday({
+    purchases: [{ date: '2026-08-15', kg: 45 }],
+    consumptions: [],
+    gramsPerHenDay: 120,
+    activeHens: 150,
+    now: new Date(2026, 7, 17),
+  });
+  assert.equal(estimate.projectedConsumedKg, 36);
+  assert.equal(estimate.estimatedKg, 9);
+});
+
+check('alimento visual: consumo mensual cerrado reemplaza su proyección', () => {
+  const consumptions: FeedConsumptionMonthly[] = [
+    {
+      id: 'july-real',
+      organization_id: 'org',
+      gallinero_id: null,
+      year: 2026,
+      month: 7,
+      kg_consumed: 150,
+      notes: null,
+      created_at: '2026-08-01T00:00:00.000Z',
+      updated_at: '2026-08-01T00:00:00.000Z',
+    },
+  ];
+  const estimate = estimateFeedAvailableKgToday({
+    baseline: { date: '2026-07-01', stockKg: 500 },
+    purchases: [],
+    consumptions,
+    gramsPerHenDay: 100,
+    activeHens: 100,
+    now: new Date(2026, 7, 2),
+  });
+  // Julio usa 150 kg reales; solo el 1 de agosto usa la proyección de 10 kg/día.
+  assert.equal(estimate.declaredConsumedKg, 150);
+  assert.equal(estimate.projectedConsumedKg, 10);
+  assert.equal(estimate.estimatedKg, 340);
 });
 
 check('resolveFeedReachAnchorDate: max(baseline, compra, fin mes consumo)', () => {

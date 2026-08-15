@@ -222,7 +222,7 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
               <h2 className="text-lg font-semibold">Alimento balanceado</h2>
             </div>
             <p className="text-3xl font-bold tabular-nums text-gray-900">
-              {formatQty(feed?.stockKg ?? 0, 2)}
+              {formatQty(feed?.estimatedStockKg ?? 0, 2)}
               <span className="ml-2 text-base font-medium text-gray-500">kg</span>
             </p>
             <p className="text-xs text-gray-600 tabular-nums">
@@ -237,6 +237,9 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
                   {formatQty(feed?.consumedKg ?? 0, 2)} kg
                 </>
               )}
+            </p>
+            <p className="text-xs text-amber-700">
+              Estimado según consumo diario; se ajusta al declarar el consumo mensual real.
             </p>
             <p className="text-sm text-gray-700">
               {feed?.daysRemaining == null ? (

@@ -402,6 +402,112 @@ export function estimateDaysFromFeedKg(
   return stock / dailyKg;
 }
 
+export type FeedAvailableKgEstimate = {
+  /** Saldo visual estimado al día de hoy; nunca negativo. */
+  estimatedKg: number;
+  /** Consumo estimado para períodos sin declaración mensual cerrada. */
+  projectedConsumedKg: number;
+  /** Consumo mensual real que reemplazó la proyección de sus meses. */
+  declaredConsumedKg: number;
+  /** Fecha desde la que comenzó la proyección visual. */
+  projectionStartYmd: string | null;
+};
+
+/**
+ * Estima el alimento disponible hoy sin escribir ni alterar el saldo contable.
+ *
+ * Las declaraciones mensuales cerradas sustituyen la quema estimada de todo
+ * su mes. Los días de meses sin declaración (incluido el mes en curso) usan
+ * la tasa diaria estimada. Así una compra nueva suma al saldo real estimado,
+ * pero no reinicia artificialmente el consumo de compras anteriores.
+ */
+export function estimateFeedAvailableKgToday(input: {
+  baseline?: { date: string; stockKg: number } | null;
+  purchases: Array<{ date: string; kg: number }>;
+  consumptions: FeedConsumptionMonthly[];
+  gramsPerHenDay: number;
+  activeHens: number;
+  now?: Date;
+}): FeedAvailableKgEstimate {
+  const now = input.now ?? new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayYmd = localDateToYmd(today);
+  const baselineDate = String(input.baseline?.date ?? '').slice(0, 10);
+  const hasBaseline = /^\d{4}-\d{2}-\d{2}$/.test(baselineDate);
+
+  const purchases = input.purchases
+    .map((purchase) => ({
+      date: String(purchase.date ?? '').slice(0, 10),
+      kg: Math.max(0, Number(purchase.kg) || 0),
+    }))
+    .filter(
+      (purchase) =>
+        purchase.kg > 0 &&
+        /^\d{4}-\d{2}-\d{2}$/.test(purchase.date) &&
+        purchase.date <= todayYmd &&
+        (!hasBaseline || purchase.date >= baselineDate)
+    );
+
+  const firstPurchaseDate = purchases.map((purchase) => purchase.date).sort()[0] ?? null;
+  const projectionStartYmd = hasBaseline ? baselineDate : firstPurchaseDate;
+  if (!projectionStartYmd || projectionStartYmd > todayYmd) {
+    return {
+      estimatedKg: Math.max(0, Number(input.baseline?.stockKg) || 0),
+      projectedConsumedKg: 0,
+      declaredConsumedKg: 0,
+      projectionStartYmd: projectionStartYmd ?? null,
+    };
+  }
+
+  const declaredByMonth = new Map<string, FeedConsumptionMonthly[]>();
+  for (const consumption of input.consumptions) {
+    const monthEnd = lastDayOfMonthYmd(consumption.year, consumption.month);
+    const monthStart = `${consumption.year}-${String(consumption.month).padStart(2, '0')}-01`;
+    // Un mes solo queda corregido por el dato real una vez que terminó.
+    // Si una apertura ocurre a mitad de mes, no se puede separar el consumo
+    // previo a la apertura; se conserva la proyección para evitar sobrerrestar.
+    if (
+      monthEnd > todayYmd ||
+      monthStart < projectionStartYmd ||
+      (Number(consumption.kg_consumed) || 0) <= 0
+    ) {
+      continue;
+    }
+    const key = monthKey(consumption.year, consumption.month);
+    const rows = declaredByMonth.get(key);
+    if (rows) rows.push(consumption);
+    else declaredByMonth.set(key, [consumption]);
+  }
+
+  let declaredConsumedKg = 0;
+  for (const rows of declaredByMonth.values()) {
+    declaredConsumedKg += sumKgForMonthRows(rows);
+  }
+
+  const declaredMonthKeys = new Set(declaredByMonth.keys());
+  let projectedDays = 0;
+  const cursor = parseLocalYmd(projectionStartYmd)!;
+  while (cursor < today) {
+    const key = monthKey(cursor.getFullYear(), cursor.getMonth() + 1);
+    if (!declaredMonthKeys.has(key)) projectedDays += 1;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  const dailyKg = (Math.max(0, Number(input.gramsPerHenDay) || 0) *
+    Math.max(0, Math.floor(Number(input.activeHens) || 0))) /
+    1000;
+  const projectedConsumedKg = dailyKg > 0 ? projectedDays * dailyKg : 0;
+  const purchasedKg = purchases.reduce((sum, purchase) => sum + purchase.kg, 0);
+  const baselineKg = hasBaseline ? Math.max(0, Number(input.baseline?.stockKg) || 0) : 0;
+
+  return {
+    estimatedKg: Math.max(0, baselineKg + purchasedKg - declaredConsumedKg - projectedConsumedKg),
+    projectedConsumedKg,
+    declaredConsumedKg,
+    projectionStartYmd,
+  };
+}
+
 /** Días restantes → etiquetas; la fecha límite debe venir anclada (no recalcular desde hoy). */
 export function formatFeedReachFromToday(
   daysRemaining: number,
