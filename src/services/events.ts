@@ -1,6 +1,5 @@
 import { supabase } from './supabase';
 import { Event, EventType } from '../types';
-import { gallinerosService } from './gallineros';
 
 /** Tipos de evento que pueden tener recordatorio de próxima aplicación */
 export const SANIDAD_EVENT_TYPES: EventType[] = ['vacunacion', 'vitaminas', 'medicacion'];
@@ -40,57 +39,6 @@ function normalizeReminderDateForDb(value: string | null | undefined): string | 
   if (!s) return null;
   const day = s.length >= 10 ? s.slice(0, 10) : s;
   return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : null;
-}
-
-/** Compatibilidad con filas previas a la migración de tipos */
-function coerceEventType(raw: string): EventType {
-  if (raw === 'vacuna') return 'vacunacion';
-  if (raw === 'observacion') return 'otros';
-  return raw as EventType;
-}
-
-/** Tipos que modifican el stock de gallinas en el gallinero */
-function isStockDecrease(type: EventType): boolean {
-  return type === 'muerte';
-}
-
-function isStockIncrease(type: EventType): boolean {
-  return type === 'ingreso_pollitas';
-}
-
-async function adjustGallineroStock(
-  organizationId: string,
-  gallineroId: string,
-  eventType: EventType,
-  affectedCount: number,
-  mode: 'apply' | 'revert'
-): Promise<void> {
-  const n = Math.max(0, Math.floor(Number(affectedCount) || 0));
-  if (n === 0) return;
-  if (!isStockDecrease(eventType) && !isStockIncrease(eventType)) return;
-
-  const gallinero = await gallinerosService.getById(organizationId, gallineroId);
-  if (!gallinero) return;
-
-  let next = gallinero.current_count;
-
-  if (eventType === 'muerte') {
-    if (mode === 'apply') {
-      next = Math.max(0, gallinero.current_count - n);
-    } else {
-      next = Math.min(gallinero.capacity, gallinero.current_count + n);
-    }
-  } else if (eventType === 'ingreso_pollitas') {
-    if (mode === 'apply') {
-      next = Math.min(gallinero.capacity, gallinero.current_count + n);
-    } else {
-      next = Math.max(0, gallinero.current_count - n);
-    }
-  }
-
-  if (next !== gallinero.current_count) {
-    await gallinerosService.update(organizationId, gallineroId, { current_count: next });
-  }
 }
 
 export const eventsService = {
@@ -230,8 +178,6 @@ export const eventsService = {
 
     if (error) throw error;
 
-    await adjustGallineroStock(organizationId, gallineroId, eventType, affectedCount, 'apply');
-
     return data;
   },
 
@@ -247,14 +193,6 @@ export const eventsService = {
   ): Promise<Event> {
     const previous = await this.getById(organizationId, id);
     if (!previous) throw new Error('Evento no encontrado');
-
-    await adjustGallineroStock(
-      organizationId,
-      previous.gallinero_id,
-      coerceEventType(previous.event_type),
-      previous.affected_count,
-      'revert'
-    );
 
     const nextReminderRaw =
       extras?.reminder_date !== undefined
@@ -286,23 +224,10 @@ export const eventsService = {
 
     if (error) throw error;
 
-    await adjustGallineroStock(organizationId, gallineroId, eventType, affectedCount, 'apply');
-
     return data;
   },
 
   async delete(organizationId: string, id: string): Promise<void> {
-    const existing = await this.getById(organizationId, id);
-    if (existing) {
-      await adjustGallineroStock(
-        organizationId,
-        existing.gallinero_id,
-        coerceEventType(existing.event_type),
-        existing.affected_count,
-        'revert'
-      );
-    }
-
     const { error } = await supabase
       .from('events')
       .delete()

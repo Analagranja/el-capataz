@@ -1,9 +1,8 @@
 import React from 'react';
 import { Event, EventType, Gallinero } from '../types';
-import { eventsService, eventCalendarDateToDbIso, isSanidadEventType } from '../services/events';
+import { eventsService, isSanidadEventType, SANIDAD_EVENT_TYPES } from '../services/events';
 import { gallinerosService } from '../services/gallineros';
 import { useAuth } from '../contexts/AuthContext';
-import { useBumpDashboardMetrics } from '../contexts/DashboardMetricsRefreshContext';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
@@ -20,6 +19,9 @@ const EVENT_TYPE_OPTIONS: { value: EventType; label: string }[] = [
   { value: 'muerte', label: 'Muerte' },
   { value: 'otros', label: 'Otros (Notas)' },
 ];
+
+/** Tipos disponibles al crear o editar (sin ingreso; el histórico se conserva en la línea de tiempo). */
+const EVENT_TYPE_CREATE_OPTIONS = EVENT_TYPE_OPTIONS.filter((o) => o.value !== 'ingreso_pollitas');
 
 const EVENT_TYPE_LABELS: Record<EventType, string> = {
   vacunacion: 'Vacunación',
@@ -75,7 +77,6 @@ function dateInputValue(iso: string): string {
 
 export default function Eventos({ selectedGallineroId }: EventosProps) {
   const { organizationId } = useAuth();
-  const bumpGallinerosHeader = useBumpDashboardMetrics();
   const [gallineros, setGallineros] = React.useState<Gallinero[]>([]);
   const [events, setEvents] = React.useState<Event[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -175,6 +176,21 @@ export default function Eventos({ selectedGallineroId }: EventosProps) {
 
   const needsAffectedCount = (t: EventType) => t === 'muerte' || t === 'ingreso_pollitas';
 
+  const tratamientosCount = React.useMemo(
+    () => filteredEvents.filter((e) => SANIDAD_EVENT_TYPES.includes(e.event_type)).length,
+    [filteredEvents]
+  );
+
+  const muertesRegistradas = React.useMemo(
+    () =>
+      filteredEvents
+        .filter((e) => e.event_type === 'muerte')
+        .reduce((sum, e) => sum + e.affected_count, 0),
+    [filteredEvents]
+  );
+
+  const isHistoricalIngresoEdit = editingId !== null && formData.event_type === 'ingreso_pollitas';
+
   const handleOpenModal = (event?: Event) => {
     setFormError('');
     if (event) {
@@ -223,9 +239,18 @@ export default function Eventos({ selectedGallineroId }: EventosProps) {
       return;
     }
 
+    if (!editingId && formData.event_type === 'ingreso_pollitas') {
+      setFormError('Los ingresos de aves se registran desde Gallineros o Recría.');
+      return;
+    }
+
     const count = Math.max(0, Math.floor(Number(formData.affected_count) || 0));
     if (needsAffectedCount(formData.event_type) && count <= 0) {
-      setFormError('Indicá la cantidad de aves (mayor a 0) para Muerte o Ingreso de Pollitas.');
+      setFormError(
+        formData.event_type === 'ingreso_pollitas'
+          ? 'Indicá la cantidad de pollitas (mayor a 0).'
+          : 'Indicá la cantidad de aves (mayor a 0) para registrar una muerte en la bitácora.'
+      );
       return;
     }
 
@@ -261,8 +286,6 @@ export default function Eventos({ selectedGallineroId }: EventosProps) {
           reminderDateVal
         );
       }
-      await loadGallineros();
-      bumpGallinerosHeader();
       await loadEvents();
       if (formData.date.length >= 4) {
         const y = formData.date.slice(0, 4);
@@ -287,11 +310,9 @@ export default function Eventos({ selectedGallineroId }: EventosProps) {
 
   const handleDelete = async (id: string) => {
     if (!organizationId) return;
-    if (window.confirm('¿Eliminar este evento? El stock de gallinas se revertirá si aplica.')) {
+    if (window.confirm('¿Eliminar este evento de la bitácora? Esta acción no afecta el inventario de aves.')) {
       try {
         await eventsService.delete(organizationId, id);
-        await loadGallineros();
-        bumpGallinerosHeader();
         await loadEvents();
       } catch (error) {
         console.error('Error deleting event:', error);
@@ -308,7 +329,9 @@ export default function Eventos({ selectedGallineroId }: EventosProps) {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <div>
           <h2 className="text-3xl font-bold text-gray-900">Eventos</h2>
-          <p className="text-sm text-amber-700 mt-1">Premium · Muertes e ingresos actualizan el stock del gallinero</p>
+          <p className="text-sm text-amber-700 mt-1">
+            Bitácora de eventos sanitarios y novedades por gallinero. No modifica el inventario de aves.
+          </p>
         </div>
         <Button variant="primary" onClick={() => handleOpenModal()} disabled={gallineros.length === 0}>
           <Plus size={20} />
@@ -346,23 +369,17 @@ export default function Eventos({ selectedGallineroId }: EventosProps) {
 
           <Card padding="md" hover>
             <div>
-              <p className="text-sm text-gray-600 mb-1">Bajas (aves)</p>
-              <p className="text-2xl font-bold text-red-600">
-                {filteredEvents
-                  .filter((e) => e.event_type === 'muerte')
-                  .reduce((sum, e) => sum + e.affected_count, 0)}
-              </p>
+              <p className="text-sm text-gray-600 mb-1">Muertes registradas</p>
+              <p className="text-2xl font-bold text-red-600">{muertesRegistradas}</p>
+              <p className="text-xs text-gray-500 mt-1">Suma en bitácora · no ajusta el stock</p>
             </div>
           </Card>
 
           <Card padding="md" hover>
             <div>
-              <p className="text-sm text-gray-600 mb-1">Ingresos (pollitas)</p>
-              <p className="text-2xl font-bold text-green-700">
-                {filteredEvents
-                  .filter((e) => e.event_type === 'ingreso_pollitas')
-                  .reduce((sum, e) => sum + e.affected_count, 0)}
-              </p>
+              <p className="text-sm text-gray-600 mb-1">Tratamientos</p>
+              <p className="text-2xl font-bold text-teal-700">{tratamientosCount}</p>
+              <p className="text-xs text-gray-500 mt-1">Vacunas, vitaminas y medicación</p>
             </div>
           </Card>
         </div>
@@ -451,13 +468,23 @@ export default function Eventos({ selectedGallineroId }: EventosProps) {
             required
           />
 
-          <Select
-            label="Tipo de evento"
-            options={EVENT_TYPE_OPTIONS}
-            value={formData.event_type}
-            onChange={(e) => setFormData({ ...formData, event_type: e.target.value as EventType })}
-            required
-          />
+          {isHistoricalIngresoEdit ? (
+            <div>
+              <span className="block text-sm font-medium text-gray-700 mb-1">Tipo de evento</span>
+              <p className="text-sm text-gray-900 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                Ingreso de Pollitas
+                <span className="text-gray-500"> · registro histórico</span>
+              </p>
+            </div>
+          ) : (
+            <Select
+              label="Tipo de evento"
+              options={EVENT_TYPE_CREATE_OPTIONS}
+              value={formData.event_type}
+              onChange={(e) => setFormData({ ...formData, event_type: e.target.value as EventType })}
+              required
+            />
+          )}
 
           <Input
             label="Descripción / nota"
