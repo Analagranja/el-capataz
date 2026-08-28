@@ -7,6 +7,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useRole } from '../hooks/useRole';
 import { supabase } from '../services/supabase';
 import type { UserRole } from '../types';
+import { isPlatformAdminEmail } from '../constants/subscription';
+import PlatformBillingAdmin from '../components/PlatformBillingAdmin';
 
 type MemberRow = {
   user_id: string;
@@ -63,6 +65,8 @@ export default function Configuracion() {
   const [inviteLoading, setInviteLoading] = React.useState(false);
   const [inviteBusy, setInviteBusy] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
+
+  const showPlatformBilling = isPlatformAdminEmail(sessionUser?.email);
 
   const loadOrgInviteCode = React.useCallback(async () => {
     if (!organizationId || !isAdmin) {
@@ -405,6 +409,8 @@ export default function Configuracion() {
           </div>
         )}
       </Card>
+
+      {showPlatformBilling ? <PlatformBillingAdmin /> : null}
     </div>
   );
 }

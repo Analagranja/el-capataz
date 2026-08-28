@@ -17,6 +17,7 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import FeedConsumptionMissingReminder from '../components/FeedConsumptionMissingReminder';
+import TrialSubscriptionBanner from '../components/TrialSubscriptionBanner';
 
 const STOCK_Umbral_KEY = 'stock_umbral_alerta';
 
@@ -205,6 +206,8 @@ export default function Dashboard({
 
   return (
     <div className="mx-auto max-w-6xl space-y-8 sm:space-y-10">
+      {organizationId ? <TrialSubscriptionBanner organizationId={organizationId} /> : null}
+
       <header className="space-y-2 px-0.5">
         <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-violet-400/90">El Capataz</p>
         <h2 className="text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">Panel</h2>
