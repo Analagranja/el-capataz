@@ -12,6 +12,7 @@ import {
   LogOut,
   Wallet,
   ClipboardList,
+  Bird,
   Settings,
 } from 'lucide-react';
 import { Page } from '../../types';
@@ -32,6 +33,7 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
     { id: 'dashboard', label: 'Panel', icon: Home },
     { id: 'gallineros', label: 'Gallineros', icon: Layers },
     { id: 'produccion', label: 'Producción', icon: TrendingUp },
+    { id: 'recria', label: 'Recría (Beta)', icon: Bird },
     { id: 'ventas', label: 'Ventas', icon: ShoppingCart },
     { id: 'clientes', label: 'Clientes', icon: Contact },
     { id: 'gastos', label: 'Gastos', icon: Wallet },

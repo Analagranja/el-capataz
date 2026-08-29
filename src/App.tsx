@@ -7,6 +7,7 @@ import AppHeader from './components/layout/AppHeader';
 import Dashboard from './pages/Dashboard';
 import Gallineros from './pages/Gallineros';
 import Produccion from './pages/Produccion';
+import Recria from './pages/Recria';
 import Ventas from './pages/Ventas';
 import Clientes from './pages/Clientes';
 import Gastos from './pages/Gastos';
@@ -71,6 +72,15 @@ function AppShell() {
             onNavigate={setCurrentPage}
             consumptionFocus={produccionConsumptionFocus}
             onConsumptionFocusConsumed={() => setProduccionConsumptionFocus(null)}
+          />
+        );
+      case 'recria':
+        return (
+          <Recria
+            onOpenGallinero={(gallineroId) => {
+              setSelectedGallineroId(gallineroId);
+              setCurrentPage('gallineros');
+            }}
           />
         );
       case 'ventas':

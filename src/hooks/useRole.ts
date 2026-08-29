@@ -6,7 +6,7 @@ const ROLE_VIEW_OVERRIDE_KEY = 'temporary_role_view_override';
 const ROLE_VIEW_CHANGED_EVENT = 'temporary-role-view-changed';
 
 /** Páginas permitidas por rol (admin = todas). */
-const OPERATOR_ALLOWED_PAGES: Page[] = ['gallineros', 'produccion', 'eventos', 'inventario'];
+const OPERATOR_ALLOWED_PAGES: Page[] = ['gallineros', 'produccion', 'recria', 'eventos', 'inventario'];
 const VENDEDOR_ALLOWED_PAGES: Page[] = ['ventas', 'clientes', 'gastos', 'inventario'];
 
 function readRoleOverride(): UserRole | null {

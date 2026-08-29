@@ -206,6 +206,68 @@ export interface FeedLog {
   created_at: string;
 }
 
+export type RecriaFeedStage =
+  | 'pre_iniciador'
+  | 'iniciador'
+  | 'crecimiento'
+  | 'desarrollo'
+  | 'pre_postura';
+
+export type RecriaFlockStatus = 'active' | 'graduated' | 'retired';
+
+export interface RecriaFlock {
+  id: string;
+  organization_id: string;
+  name: string;
+  status: RecriaFlockStatus;
+  initial_count: number;
+  current_count: number;
+  breed?: string | null;
+  supplier?: string | null;
+  /** Fecha de nacimiento real; opcional si se desconoce. */
+  birth_date?: string | null;
+  /** Ingreso a la granja; siempre requerida. */
+  entry_date: string;
+  location_notes?: string | null;
+  notes?: string | null;
+  graduated_at?: string | null;
+  graduated_gallinero_id?: string | null;
+  graduated_flock_id?: string | null;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RecriaWeeklyFollowup {
+  id: string;
+  organization_id: string;
+  recria_flock_id: string;
+  week_start_date: string;
+  average_weight_g?: number | null;
+  mortality_count: number;
+  mortality_reason?: string | null;
+  feed_stage: RecriaFeedStage;
+  notes?: string | null;
+  created_by?: string | null;
+  created_at: string;
+}
+
+export type RecriaEventType = 'vacunacion' | 'vitaminas' | 'medicacion' | 'otros';
+
+export interface RecriaEvent {
+  id: string;
+  organization_id: string;
+  recria_flock_id: string;
+  event_type: RecriaEventType;
+  description: string;
+  affected_count: number;
+  event_date: string;
+  reminder_date?: string | null;
+  completed: boolean;
+  created_by?: string | null;
+  created_at: string;
+}
+
 export interface FeedConsumptionMonthly {
   id: string;
   organization_id: string;
@@ -226,6 +288,7 @@ export type Page =
   | 'dashboard'
   | 'gallineros'
   | 'produccion'
+  | 'recria'
   | 'ventas'
   | 'clientes'
   | 'gastos'
