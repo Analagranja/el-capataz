@@ -2,12 +2,11 @@ import React from 'react';
 import { Gallinero, Page, ProductionRecord } from '../types';
 import { gallinerosService } from '../services/gallineros';
 import { productionService, productionFormDateToDbDate, computeLayingPercentage } from '../services/production';
-import { feedLogsService } from '../services/feedLogs';
 import {
   inventoryStockService,
   type FeedInventorySnapshot,
 } from '../services/inventoryStock';
-import { formatFeedReachFromToday, formatUnknownError } from '../services/inventoryStockCalc';
+import { formatFeedReachFromToday } from '../services/inventoryStockCalc';
 import { useAuth } from '../contexts/AuthContext';
 import { useRole } from '../hooks/useRole';
 import { useBumpDashboardMetrics } from '../contexts/DashboardMetricsRefreshContext';
@@ -19,8 +18,7 @@ import Modal from '../components/ui/Modal';
 import Table from '../components/ui/Table';
 import { Plus, Pencil, Trash2, Wallet } from 'lucide-react';
 import { todayLocalYmd } from '../utils/monthToDateFinance';
-import { numberInputValue, parseFormFloat, parseFormInt } from '../utils/formNumbers';
-import { distributeFeedKgByGallinero } from '../utils/distributeFeedKg';
+import { numberInputValue, parseFormInt } from '../utils/formNumbers';
 import DeclareMonthlyFeedModal from '../components/DeclareMonthlyFeedModal';
 
 const MONTH_LABELS = [
@@ -50,15 +48,6 @@ function toDateInputValue(raw: string): string {
   return raw.includes('T') ? raw.split('T')[0] : raw.slice(0, 10);
 }
 
-const LAST_BAG_KG_KEY = 'produccion_last_feed_bag_kg';
-
-function getSavedKgPorBolsa(): number {
-  if (typeof window === 'undefined') return 25;
-  const raw = window.localStorage.getItem(LAST_BAG_KG_KEY);
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 25;
-}
-
 export default function Produccion({
   selectedGallineroId,
   onNavigate,
@@ -73,8 +62,6 @@ export default function Produccion({
   const [feedSnapshot, setFeedSnapshot] = React.useState<FeedInventorySnapshot | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
-  const [isFeedLogModalOpen, setIsFeedLogModalOpen] = React.useState(false);
-  const [feedStockWarning, setFeedStockWarning] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [currentGallineroId, setCurrentGallineroId] = React.useState(selectedGallineroId);
   const [error, setError] = React.useState<string>('');
@@ -83,15 +70,6 @@ export default function Produccion({
   const [selectedMonth, setSelectedMonth] = React.useState<string>(
     String(new Date().getMonth() + 1).padStart(2, '0')
   );
-  const [feedConsumoTipo, setFeedConsumoTipo] = React.useState<'bolsas' | 'granel'>('bolsas');
-  const [feedCantidadBolsas, setFeedCantidadBolsas] = React.useState(0);
-  const [feedKgPorBolsa, setFeedKgPorBolsa] = React.useState<number>(() => getSavedKgPorBolsa());
-  const [feedKgGranel, setFeedKgGranel] = React.useState(0);
-  const [feedLogDate, setFeedLogDate] = React.useState(() => todayLocalYmd());
-  const [feedGallineroTarget, setFeedGallineroTarget] = React.useState<string>('all');
-  const [feedLogSaving, setFeedLogSaving] = React.useState(false);
-  const [feedLogError, setFeedLogError] = React.useState('');
-  const [feedLogSuccess, setFeedLogSuccess] = React.useState('');
   const [isMonthlyFeedModalOpen, setIsMonthlyFeedModalOpen] = React.useState(false);
   const [monthlyFeedFocus, setMonthlyFeedFocus] = React.useState<{
     year?: number;
@@ -244,194 +222,6 @@ export default function Produccion({
     setClasificarPorTamano(false);
     setError('');
     setDuplicateInfo(null);
-  };
-
-  const resetFeedConsumoForm = React.useCallback(() => {
-    setFeedConsumoTipo('bolsas');
-    setFeedCantidadBolsas(0);
-    setFeedKgPorBolsa(getSavedKgPorBolsa());
-    setFeedKgGranel(0);
-    setFeedLogDate(todayLocalYmd());
-  }, []);
-
-  const feedTotalKgComputed =
-    feedConsumoTipo === 'bolsas'
-      ? Math.max(0, Math.floor(feedCantidadBolsas)) * Math.max(0, feedKgPorBolsa)
-      : Math.max(0, feedKgGranel);
-
-  const feedGallineroSelectOptions = React.useMemo(
-    () => [
-      { value: 'all', label: 'Toda la granja (distribuir)' },
-      ...gallineros.map((g) => ({ value: g.id, label: g.name })),
-    ],
-    [gallineros]
-  );
-
-  const openFeedLogModal = () => {
-    setFeedLogError('');
-    setFeedLogSuccess('');
-    resetFeedConsumoForm();
-    setFeedGallineroTarget(currentGallineroId ?? 'all');
-    setIsFeedLogModalOpen(true);
-  };
-
-  const isFeedConsumoFormValid = React.useMemo(() => {
-    if (!feedLogDate?.trim()) return false;
-    if (!feedGallineroTarget) return false;
-    if (feedConsumoTipo === 'bolsas') {
-      const n = Math.floor(feedCantidadBolsas);
-      const kg = feedKgPorBolsa;
-      return n >= 1 && Number.isFinite(kg) && kg > 0 && Number.isFinite(n * kg) && n * kg > 0;
-    }
-    return Number.isFinite(feedKgGranel) && feedKgGranel > 0;
-  }, [
-    feedLogDate,
-    feedConsumoTipo,
-    feedCantidadBolsas,
-    feedKgPorBolsa,
-    feedKgGranel,
-    feedGallineroTarget,
-  ]);
-
-  const handleCloseFeedLogModal = () => {
-    setIsFeedLogModalOpen(false);
-    setFeedLogError('');
-    setFeedStockWarning(false);
-    resetFeedConsumoForm();
-  };
-
-  const persistFeedLog = async (): Promise<boolean> => {
-    if (!canLogProduction()) {
-      setFeedLogError('No tenés permiso para registrar consumo.');
-      return false;
-    }
-    if (!organizationId) {
-      setFeedLogError('Sesión no válida. Volvé a iniciar sesión e intentá de nuevo.');
-      return false;
-    }
-    if (!isFeedConsumoFormValid) {
-      setFeedLogError('Completá todos los campos obligatorios.');
-      return false;
-    }
-    const totalKg =
-      feedConsumoTipo === 'bolsas'
-        ? Math.max(0, Math.floor(feedCantidadBolsas)) * Math.max(0, feedKgPorBolsa)
-        : Math.max(0, feedKgGranel);
-    if (!Number.isFinite(totalKg) || totalKg <= 0) {
-      setFeedLogError('Revisá los kg ingresados.');
-      return false;
-    }
-    try {
-      setFeedLogSaving(true);
-      setFeedLogError('');
-      const logDate = feedLogDate.trim().slice(0, 10);
-      const metaBolsas =
-        feedConsumoTipo === 'bolsas'
-          ? {
-              tipo: 'bolsas' as const,
-              cantidad_bolsas: Math.floor(feedCantidadBolsas),
-              kg_por_bolsa: feedKgPorBolsa,
-            }
-          : { tipo: 'granel' as const };
-
-      if (feedGallineroTarget === 'all') {
-        const shares = distributeFeedKgByGallinero(totalKg, gallineros);
-        if (shares.length === 0) {
-          setFeedLogError('No hay gallineros con gallinas para distribuir el consumo.');
-          return false;
-        }
-        await Promise.all(
-          shares.map(({ gallineroId, kg }) =>
-            feedLogsService.create(organizationId, gallineroId, logDate, kg, {
-              tipo: feedConsumoTipo,
-              ...(feedConsumoTipo === 'bolsas'
-                ? {
-                    cantidad_bolsas: Math.floor(feedCantidadBolsas),
-                    kg_por_bolsa: feedKgPorBolsa,
-                  }
-                : {}),
-            })
-          )
-        );
-        if (feedConsumoTipo === 'bolsas' && typeof window !== 'undefined') {
-          window.localStorage.setItem(LAST_BAG_KG_KEY, String(feedKgPorBolsa));
-        }
-      } else if (feedConsumoTipo === 'bolsas') {
-        await feedLogsService.create(organizationId, feedGallineroTarget, logDate, totalKg, metaBolsas);
-        if (typeof window !== 'undefined') {
-          window.localStorage.setItem(LAST_BAG_KG_KEY, String(feedKgPorBolsa));
-        }
-      } else {
-        await feedLogsService.create(organizationId, feedGallineroTarget, logDate, totalKg, metaBolsas);
-      }
-
-      const gallineroLabel =
-        feedGallineroTarget === 'all'
-          ? 'toda la granja'
-          : gallineros.find((g) => g.id === feedGallineroTarget)?.name || 'el gallinero';
-      bumpDashboardMetrics();
-      setFeedStockWarning(false);
-      await loadFeedSnapshot();
-      handleCloseFeedLogModal();
-      setFeedLogSuccess(
-        `Consumo diario de ${totalKg.toFixed(1)} kg registrado en ${gallineroLabel} (${logDate}).`
-      );
-      return true;
-    } catch (error) {
-      console.error('Error saving feed log:', error);
-      setFeedLogError(
-        formatUnknownError(
-          error,
-          'No se pudo guardar el consumo de alimento. Revisá la conexión e intentá de nuevo.'
-        )
-      );
-      return false;
-    } finally {
-      setFeedLogSaving(false);
-    }
-  };
-
-  const handleSaveFeedLog = async () => {
-    if (!canLogProduction()) {
-      setFeedLogError('No tenés permiso para registrar consumo.');
-      return;
-    }
-    if (!organizationId) {
-      setFeedLogError('Sesión no válida. Volvé a iniciar sesión e intentá de nuevo.');
-      return;
-    }
-    if (!isFeedConsumoFormValid) {
-      setFeedLogError('Completá todos los campos obligatorios.');
-      return;
-    }
-    const totalKg =
-      feedConsumoTipo === 'bolsas'
-        ? Math.max(0, Math.floor(feedCantidadBolsas)) * Math.max(0, feedKgPorBolsa)
-        : Math.max(0, feedKgGranel);
-    if (!Number.isFinite(totalKg) || totalKg <= 0) {
-      setFeedLogError('Revisá los kg ingresados.');
-      return;
-    }
-
-    setFeedLogSaving(true);
-    setFeedLogError('');
-    try {
-      const feedInv = await inventoryStockService.loadFeedInventory(organizationId);
-      // Tolerancia mínima por redondeo; igual al stock disponible no debe advertir.
-      if (feedInv.stockKg <= 0 || totalKg > feedInv.stockKg + 0.001) {
-        setFeedStockWarning(true);
-        setFeedLogError(
-          `Stock disponible: ${feedInv.stockKg.toFixed(1)} kg. Este consumo pide ${totalKg.toFixed(1)} kg.`
-        );
-        setFeedLogSaving(false);
-        return;
-      }
-    } catch (error) {
-      console.error('Error checking feed stock before log:', error);
-      // Si falla el chequeo de stock, no bloquear el registro operativo.
-    }
-
-    await persistFeedLog();
   };
 
   const findExistingRecordForDate = async (gallineroId: string, date: string) => {
@@ -637,17 +427,6 @@ export default function Produccion({
           )}
         </div>
       </div>
-      {canLogProduction() ? (
-        <p className="text-xs text-gray-500 -mt-4">
-          <button
-            type="button"
-            className="underline hover:text-gray-700"
-            onClick={openFeedLogModal}
-          >
-            Registro diario avanzado (opcional)
-          </button>
-        </p>
-      ) : null}
 
       {gallineros.length > 0 && (
         <Card padding="md">
@@ -700,21 +479,6 @@ export default function Produccion({
                   type="button"
                   className="shrink-0 text-emerald-700 underline"
                   onClick={() => setMonthlyFeedSuccess('')}
-                >
-                  Cerrar
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          {feedLogSuccess ? (
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-              <div className="flex items-start justify-between gap-3">
-                <p>{feedLogSuccess}</p>
-                <button
-                  type="button"
-                  className="shrink-0 text-emerald-700 underline"
-                  onClick={() => setFeedLogSuccess('')}
                 >
                   Cerrar
                 </button>
@@ -1089,158 +853,6 @@ export default function Produccion({
         </form>
       </Modal>
 
-      <Modal isOpen={isFeedLogModalOpen} onClose={handleCloseFeedLogModal} title="Registro diario avanzado">
-        <div className="space-y-4">
-          <p className="text-xs text-gray-500">
-            Uso opcional: apertura diaria de alimento. Para el stock y los días restantes usá
-            “Declarar consumo del mes”.
-          </p>
-          <Select
-            label="Gallinero"
-            options={feedGallineroSelectOptions}
-            value={feedGallineroTarget}
-            onChange={(e) => setFeedGallineroTarget(e.target.value)}
-            required
-          />
-
-          <Select
-            label="Tipo de compra"
-            options={[
-              { value: 'bolsas', label: 'Bolsas' },
-              { value: 'granel', label: 'Granel' },
-            ]}
-            value={feedConsumoTipo}
-            onChange={(e) => {
-              const v = e.target.value as 'bolsas' | 'granel';
-              setFeedConsumoTipo(v);
-              if (v === 'bolsas') {
-                setFeedKgGranel(0);
-              } else {
-                setFeedCantidadBolsas(0);
-              }
-            }}
-            required
-          />
-
-          {feedConsumoTipo === 'bolsas' ? (
-            <>
-              <Input
-                label="Cantidad de bolsas"
-                type="number"
-                step="1"
-                min="1"
-                inputMode="numeric"
-                value={numberInputValue(feedCantidadBolsas)}
-                onChange={(e) => setFeedCantidadBolsas(parseFormInt(e.target.value, 0))}
-                required
-              />
-              <Input
-                label="Kg por bolsa"
-                type="number"
-                step="0.01"
-                min="0"
-                value={numberInputValue(feedKgPorBolsa)}
-                onChange={(e) => setFeedKgPorBolsa(parseFormFloat(e.target.value, 0))}
-                helperText="Se recuerda el último valor para la próxima vez."
-                required
-              />
-              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-sm font-medium text-gray-700 mb-1">Total kg</p>
-                <p className="text-lg font-semibold tabular-nums text-gray-900">
-                  {Number.isFinite(feedTotalKgComputed) ? feedTotalKgComputed.toFixed(2) : '0.00'} kg
-                </p>
-                <p className="mt-1 text-xs text-gray-500">Cantidad de bolsas × kg por bolsa (solo lectura)</p>
-              </div>
-            </>
-          ) : (
-            <Input
-              label="Kg totales"
-              type="number"
-              step="0.01"
-              min="0"
-              value={numberInputValue(feedKgGranel)}
-              onChange={(e) => setFeedKgGranel(parseFormFloat(e.target.value, 0))}
-              required
-            />
-          )}
-
-          <Input
-            label="Fecha de apertura / ingreso"
-            type="date"
-            value={feedLogDate}
-            onChange={(e) => setFeedLogDate(e.target.value)}
-            required
-          />
-
-          {feedLogError ? (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {feedLogError}
-            </div>
-          ) : null}
-          <div className="flex gap-2 pt-2">
-            <Button
-              variant="primary"
-              type="button"
-              onClick={() => void handleSaveFeedLog()}
-              className="flex-1"
-              disabled={feedLogSaving || !isFeedConsumoFormValid}
-            >
-              {feedLogSaving ? 'Guardando…' : 'Guardar'}
-            </Button>
-            <Button
-              variant="secondary"
-              type="button"
-              onClick={handleCloseFeedLogModal}
-              className="flex-1"
-              disabled={feedLogSaving}
-            >
-              Cancelar
-            </Button>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal
-        isOpen={feedStockWarning}
-        onClose={() => setFeedStockWarning(false)}
-        title="Alimento insuficiente"
-        overlayClassName="z-[60]"
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-gray-700">
-            No hay alimento suficiente en stock. ¿Te olvidaste de cargar la compra?
-          </p>
-          {feedLogError ? (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              {feedLogError}
-            </div>
-          ) : null}
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Button
-              type="button"
-              variant="primary"
-              className="flex-1"
-              onClick={() => {
-                setFeedStockWarning(false);
-                handleCloseFeedLogModal();
-                onNavigate?.('gastos');
-              }}
-            >
-              Cargar compra de alimento
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              className="flex-1"
-              onClick={() => void persistFeedLog()}
-              disabled={feedLogSaving}
-            >
-              Guardar de todas formas
-            </Button>
-          </div>
-        </div>
-      </Modal>
-
       {organizationId ? (
         <DeclareMonthlyFeedModal
           isOpen={isMonthlyFeedModalOpen}
@@ -1263,7 +875,6 @@ export default function Produccion({
               `Consumo de ${label} guardado: ${Number(saved.kg_consumed).toFixed(1)} kg. ` +
                 'Stock, g/ave/día y días restantes actualizados en esta pantalla.'
             );
-            setFeedLogSuccess('');
           }}
         />
       ) : null}
