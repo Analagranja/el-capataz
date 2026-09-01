@@ -861,10 +861,12 @@ export default function Produccion({
             setMonthlyFeedFocus(null);
           }}
           organizationId={organizationId}
+          gallineros={gallineros}
           activeHens={gallineros.reduce(
             (sum, g) => sum + Math.max(0, Math.floor(Number(g.current_count) || 0)),
             0
           )}
+          initialGallineroId={currentGallineroId}
           initialYear={monthlyFeedFocus?.year}
           initialMonth={monthlyFeedFocus?.month}
           onSaved={async (saved) => {
@@ -875,6 +877,11 @@ export default function Produccion({
               `Consumo de ${label} guardado: ${Number(saved.kg_consumed).toFixed(1)} kg. ` +
                 'Stock, g/ave/día y días restantes actualizados en esta pantalla.'
             );
+          }}
+          onDeleted={async () => {
+            await loadFeedSnapshot();
+            bumpDashboardMetrics();
+            setMonthlyFeedSuccess('Declaración de consumo eliminada. Stock y estimados actualizados.');
           }}
         />
       ) : null}

@@ -73,7 +73,24 @@ export const feedConsumptionMonthlyService = {
     return toFeedConsumptionMonthly(data as FeedConsumptionMonthlyRow);
   },
 
-  /** Declaraciones de uno o más años (toda la org, todos los gallineros). */
+  /** Todas las filas del mes (org + gallineros) para validar mutua exclusión. */
+  async getAllForPeriod(
+    organizationId: string,
+    year: number,
+    month: number
+  ): Promise<FeedConsumptionMonthly[]> {
+    const { data, error } = await supabase
+      .from('feed_consumption_monthly')
+      .select(SELECT_COLUMNS)
+      .eq('organization_id', organizationId)
+      .eq('year', year)
+      .eq('month', month)
+      .order('gallinero_id', { ascending: true, nullsFirst: true });
+
+    if (error) throw error;
+    return (data || []).map((row) => toFeedConsumptionMonthly(row as FeedConsumptionMonthlyRow));
+  },
+
   async getAllByYears(organizationId: string, years: number[]): Promise<FeedConsumptionMonthly[]> {
     const uniqueYears = [...new Set(years.filter((y) => Number.isFinite(y)))];
     if (uniqueYears.length === 0) return [];

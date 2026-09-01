@@ -20,6 +20,7 @@ import { gallinerosService } from '../services/gallineros';
 import { expensesService } from '../services/expenses';
 import { feedLogsService } from '../services/feedLogs';
 import { feedConsumptionMonthlyService } from '../services/feedConsumptionMonthly';
+import { aggregateMonthFeedDeclaration, resolveHensForMonthRows, sumKgForMonthRows } from '../services/inventoryStockCalc';
 import { useAuth } from '../contexts/AuthContext';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -152,7 +153,7 @@ export default function Estadisticas() {
   }, [organizationId, selectedYear]);
 
   React.useEffect(() => {
-    if (!organizationId || !selectedMonth) {
+    if (!organizationId || !selectedMonth || !selectedGallinero) {
       setFeedConsumption(null);
       return;
     }
@@ -292,7 +293,6 @@ export default function Estadisticas() {
       0
     );
 
-  /** Aves para postura y consumo/ave: gallinero filtrado o suma de toda la granja. */
   const totalFarmHens = selectedGallinero
     ? Math.max(
         0,
@@ -301,6 +301,14 @@ export default function Estadisticas() {
         )
       )
     : sumGallineroHens(gallineros);
+
+  const aggregatedMonthFeed = React.useMemo(() => {
+    if (!selectedMonth) return null;
+    const y = Number(activeYear);
+    const m = Number(selectedMonth);
+    if (!Number.isFinite(y) || !Number.isFinite(m)) return null;
+    return aggregateMonthFeedDeclaration(periodConsumptions, y, m, totalFarmHens);
+  }, [periodConsumptions, activeYear, selectedMonth, totalFarmHens]);
 
   const eggsByDate = React.useMemo(() => {
     const m = new Map<string, number>();
@@ -418,16 +426,25 @@ export default function Estadisticas() {
     netoDelMes: resultadoPeriodo,
   };
 
-  const declaredKg = feedConsumption?.kg_consumed ?? null;
-  const declaredHens = feedConsumption?.hens_snapshot ?? null;
+  const declaredKg = selectedGallinero
+    ? feedConsumption?.kg_consumed ?? null
+    : aggregatedMonthFeed != null && aggregatedMonthFeed.kgConsumed > 0
+      ? aggregatedMonthFeed.kgConsumed
+      : null;
+  const declaredHens = selectedGallinero
+    ? feedConsumption?.hens_snapshot ?? null
+    : aggregatedMonthFeed != null && aggregatedMonthFeed.kgConsumed > 0
+      ? aggregatedMonthFeed.hens
+      : null;
   const daysForCalc = selectedMonth
     ? new Date(Number(activeYear), Number(selectedMonth), 0).getDate()
     : periodBounds.dayCount;
   const hensForCalc = declaredHens ?? totalFarmHens;
-  const gramsPerHenPerDay =
-    declaredKg != null && declaredKg > 0 && daysForCalc > 0 && hensForCalc > 0
+  const gramsPerHenPerDay = selectedGallinero
+    ? declaredKg != null && declaredKg > 0 && daysForCalc > 0 && hensForCalc > 0
       ? (declaredKg * 1000) / (daysForCalc * hensForCalc)
-      : null;
+      : null
+    : aggregatedMonthFeed?.gramsPerHenDay ?? null;
 
   const summaryCalendarYear = Number(summaryYear) || new Date().getFullYear();
   const padMonth = (n: number) => String(n).padStart(2, '0');
@@ -456,25 +473,11 @@ export default function Estadisticas() {
     );
     const gastosMes = monthCost.total;
     const gananciaMes = netoMes - gastosMes;
-    const monthConsumptions = summaryConsumptions.filter((c) => c.month === m);
-    // Preferir declaración a nivel org (gallinero_id null); si no hay, sumar por gallinero.
-    const orgLevel = monthConsumptions.filter((c) => c.gallinero_id == null);
-    const kgSource = orgLevel.length > 0 ? orgLevel : monthConsumptions;
-    const kgAlimento = kgSource.reduce(
-      (sum, c) => sum + Math.max(0, Number(c.kg_consumed) || 0),
-      0
+    const monthConsumptions = summaryConsumptions.filter(
+      (c) => c.month === m && c.year === summaryCalendarYear
     );
-
-    const hensFromOrg = orgLevel.find((c) => c.hens_snapshot != null && c.hens_snapshot > 0);
-    const hensFromAny = monthConsumptions.find(
-      (c) => c.hens_snapshot != null && c.hens_snapshot > 0
-    );
-    const avgAvesMes =
-      hensFromOrg?.hens_snapshot != null && hensFromOrg.hens_snapshot > 0
-        ? hensFromOrg.hens_snapshot
-        : hensFromAny?.hens_snapshot != null && hensFromAny.hens_snapshot > 0
-          ? hensFromAny.hens_snapshot
-          : sumGallineroHens(gallineros);
+    const kgAlimento = sumKgForMonthRows(monthConsumptions);
+    const avgAvesMes = resolveHensForMonthRows(monthConsumptions, sumGallineroHens(gallineros));
 
     const gramsPerHenDay =
       kgAlimento > 0 && daysInMonth > 0 && avgAvesMes > 0

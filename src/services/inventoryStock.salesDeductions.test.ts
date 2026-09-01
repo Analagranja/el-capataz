@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict';
 import {
   aggregateClosedMonthFeedRates,
+  aggregateMonthFeedDeclaration,
   availableEggStockForSale,
   availableMapleStockForSale,
   computeEggStock,
@@ -19,6 +20,7 @@ import {
   estimateFeedDaysRemaining,
   mapleImpactForSale,
   resolveFeedReachAnchorDate,
+  resolveHensForMonthRows,
   daysRemainingFromAnchor,
   saleAffectsPackagingAfterBaseline,
   sumDeclaredFeedConsumptionKg,
@@ -613,6 +615,109 @@ check('resolveFeedReachAnchorDate: max(baseline, compra, fin mes consumo)', () =
 
 check('daysRemainingFromAnchor sin aves → null', () => {
   assert.equal(daysRemainingFromAnchor(100, 117, 0, '2026-08-01'), null);
+});
+
+check('REGRESIÓN org-only: stock, g/ave/día y días restantes sin cambio', () => {
+  const activeHens = 147;
+  const consumptions: FeedConsumptionMonthly[] = [
+    {
+      id: 'jun-org',
+      organization_id: 'org',
+      gallinero_id: null,
+      year: 2026,
+      month: 6,
+      kg_consumed: 525,
+      notes: null,
+      hens_snapshot: 147,
+      created_at: '2026-07-01T00:00:00.000Z',
+      updated_at: '2026-07-01T00:00:00.000Z',
+    },
+    {
+      id: 'jul-org',
+      organization_id: 'org',
+      gallinero_id: null,
+      year: 2026,
+      month: 7,
+      kg_consumed: 510,
+      notes: null,
+      hens_snapshot: 147,
+      created_at: '2026-08-01T00:00:00.000Z',
+      updated_at: '2026-08-01T00:00:00.000Z',
+    },
+  ];
+  const purchasedKg = 2000;
+  const consumedKg = sumDeclaredFeedConsumptionKg(consumptions);
+  assert.equal(consumedKg, 1035);
+  assert.equal(computeFeedStockKg(purchasedKg, consumedKg), 965);
+
+  const juneAgg = aggregateMonthFeedDeclaration(consumptions, 2026, 6, activeHens);
+  assert.equal(juneAgg.mode, 'org');
+  assert.equal(juneAgg.kgConsumed, 525);
+  assert.equal(juneAgg.hens, 147);
+  assert.ok(juneAgg.gramsPerHenDay != null && Math.abs(juneAgg.gramsPerHenDay - 119.047619) < 0.001);
+
+  const closed = aggregateClosedMonthFeedRates(consumptions, activeHens, new Date(2026, 7, 15), 3);
+  assert.equal(closed.length, 2);
+  assert.equal(closed[0].month, 7);
+  assert.ok(Math.abs(closed[0].gramsPerHenDay - 111.916613) < 0.001);
+  assert.equal(closed[1].month, 6);
+  assert.ok(Math.abs(closed[1].gramsPerHenDay - 119.047619) < 0.001);
+
+  const hensResolved = resolveHensForMonthRows(
+    consumptions.filter((c) => c.year === 2026 && c.month === 6),
+    activeHens
+  );
+  assert.equal(hensResolved, 147);
+
+  const feedDays = estimateFeedDaysRemaining(
+    965,
+    consumptions,
+    activeHens,
+    new Date(2026, 7, 15),
+    3,
+    '2026-08-01'
+  );
+  assert.equal(feedDays.gramsSource, 'history');
+  assert.ok(Math.abs(feedDays.gramsPerHenDay - 115.481677) < 0.001);
+  assert.ok(feedDays.daysRemaining != null && Math.abs(feedDays.daysRemaining - 42.845606) < 0.01);
+  assert.equal(feedDays.untilDateYmd, '2026-09-26');
+});
+
+check('por-gallinero: suma hens_snapshot y kg cuando no hay fila org', () => {
+  const rows: FeedConsumptionMonthly[] = [
+    {
+      id: 'g1',
+      organization_id: 'org',
+      gallinero_id: 'g1',
+      year: 2026,
+      month: 8,
+      kg_consumed: 200,
+      notes: null,
+      hens_snapshot: 80,
+      created_at: '2026-09-01T00:00:00.000Z',
+      updated_at: '2026-09-01T00:00:00.000Z',
+    },
+    {
+      id: 'g2',
+      organization_id: 'org',
+      gallinero_id: 'g2',
+      year: 2026,
+      month: 8,
+      kg_consumed: 175,
+      notes: null,
+      hens_snapshot: 67,
+      created_at: '2026-09-01T00:00:00.000Z',
+      updated_at: '2026-09-01T00:00:00.000Z',
+    },
+  ];
+  const agg = aggregateMonthFeedDeclaration(rows, 2026, 8, 999);
+  assert.equal(agg.mode, 'gallineros');
+  assert.equal(agg.kgConsumed, 375);
+  assert.equal(agg.hens, 147);
+  const days = new Date(2026, 8, 0).getDate();
+  const expectedGrams = (375 * 1000) / (days * 147);
+  assert.ok(agg.gramsPerHenDay != null && Math.abs(agg.gramsPerHenDay - expectedGrams) < 0.001);
+  assert.equal(resolveHensForMonthRows(rows, 999), 147);
 });
 
 console.log(`\n${passed} tests passed`);

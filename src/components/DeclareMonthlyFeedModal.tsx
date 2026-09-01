@@ -1,7 +1,8 @@
 import React from 'react';
-import { FeedConsumptionMonthly } from '../types';
+import { FeedConsumptionMonthly, Gallinero } from '../types';
 import { feedConsumptionMonthlyService } from '../services/feedConsumptionMonthly';
 import { formatUnknownError } from '../services/inventoryStockCalc';
+import { feedConsumptionScopeConflict } from '../utils/feedConsumptionScope';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
 import Input from './ui/Input';
@@ -27,6 +28,8 @@ const MONTH_OPTIONS = MONTH_LABELS.map((label, i) => ({
   label,
 }));
 
+const FARM_SCOPE = '';
+
 function lastClosedYearMonth(now = new Date()): { year: string; month: string } {
   const d = new Date(now.getFullYear(), now.getMonth(), 1);
   d.setMonth(d.getMonth() - 1);
@@ -44,22 +47,29 @@ type Props = {
   isOpen: boolean;
   onClose: () => void;
   organizationId: string;
-  /** Aves activas de toda la granja (snapshot al guardar). */
+  gallineros: Gallinero[];
+  /** Aves activas de toda la granja (alcance "Toda la granja"). */
   activeHens: number;
+  /** Preseleccionar gallinero al abrir (p. ej. filtro de Producción). */
+  initialGallineroId?: string | null;
   /** Si vienen de un recordatorio, preseleccionar ese período. */
   initialYear?: number;
   initialMonth?: number;
   onSaved: (saved: FeedConsumptionMonthly) => void | Promise<void>;
+  onDeleted?: () => void | Promise<void>;
 };
 
 export default function DeclareMonthlyFeedModal({
   isOpen,
   onClose,
   organizationId,
+  gallineros,
   activeHens,
+  initialGallineroId,
   initialYear,
   initialMonth,
   onSaved,
+  onDeleted,
 }: Props) {
   const now = React.useMemo(() => new Date(), []);
   const defaults = React.useMemo(() => {
@@ -78,13 +88,23 @@ export default function DeclareMonthlyFeedModal({
     }
     return lastClosedYearMonth(now);
   }, [now, initialYear, initialMonth]);
+
+  const initialScope = React.useMemo(() => {
+    const id = String(initialGallineroId ?? '').trim();
+    if (id && gallineros.some((g) => g.id === id)) return id;
+    return FARM_SCOPE;
+  }, [initialGallineroId, gallineros]);
+
   const [year, setYear] = React.useState(defaults.year);
   const [month, setMonth] = React.useState(defaults.month);
+  const [scopeGallineroId, setScopeGallineroId] = React.useState(initialScope);
   const [kgConsumed, setKgConsumed] = React.useState('');
   const [notes, setNotes] = React.useState('');
   const [existing, setExisting] = React.useState<FeedConsumptionMonthly | null>(null);
+  const [monthDeclarations, setMonthDeclarations] = React.useState<FeedConsumptionMonthly[]>([]);
   const [loadingExisting, setLoadingExisting] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
+  const [deleting, setDeleting] = React.useState(false);
   const [error, setError] = React.useState('');
   const [currentMonthWarningOpen, setCurrentMonthWarningOpen] = React.useState(false);
 
@@ -96,12 +116,58 @@ export default function DeclareMonthlyFeedModal({
     });
   }, [now]);
 
+  const scopeOptions = React.useMemo(
+    () => [
+      { value: FARM_SCOPE, label: 'Toda la granja' },
+      ...gallineros.map((g) => ({
+        value: g.id,
+        label: g.name,
+      })),
+    ],
+    [gallineros]
+  );
+
   const yearNum = Number(year);
   const monthNum = Number(month);
   const periodLabel =
     Number.isFinite(yearNum) && Number.isFinite(monthNum) && monthNum >= 1 && monthNum <= 12
       ? `${MONTH_LABELS[monthNum - 1]} ${yearNum}`
       : '—';
+
+  const scopeHens = React.useMemo(() => {
+    if (scopeGallineroId === FARM_SCOPE) {
+      return Math.max(0, Math.floor(Number(activeHens) || 0));
+    }
+    const g = gallineros.find((item) => item.id === scopeGallineroId);
+    return Math.max(0, Math.floor(Number(g?.current_count) || 0));
+  }, [scopeGallineroId, activeHens, gallineros]);
+
+  const scopeLabel =
+    scopeGallineroId === FARM_SCOPE
+      ? 'Toda la granja'
+      : gallineros.find((g) => g.id === scopeGallineroId)?.name ?? 'Gallinero';
+
+  const scopeConflict = React.useMemo(
+    () => feedConsumptionScopeConflict(scopeGallineroId, monthDeclarations, existing?.id),
+    [scopeGallineroId, monthDeclarations, existing?.id]
+  );
+
+  const gallineroNameById = React.useMemo(() => {
+    const map = new Map<string, string>();
+    for (const g of gallineros) map.set(g.id, g.name);
+    return map;
+  }, [gallineros]);
+
+  const reloadMonthDeclarations = React.useCallback(async () => {
+    if (!organizationId || !Number.isFinite(yearNum) || !Number.isFinite(monthNum)) return [];
+    const rows = await feedConsumptionMonthlyService.getAllForPeriod(
+      organizationId,
+      yearNum,
+      monthNum
+    );
+    setMonthDeclarations(rows);
+    return rows;
+  }, [organizationId, yearNum, monthNum]);
 
   const resetFormForOpen = React.useCallback(() => {
     const d =
@@ -118,12 +184,14 @@ export default function DeclareMonthlyFeedModal({
         : lastClosedYearMonth(new Date());
     setYear(d.year);
     setMonth(d.month);
+    setScopeGallineroId(initialScope);
     setKgConsumed('');
     setNotes('');
     setExisting(null);
+    setMonthDeclarations([]);
     setError('');
     setCurrentMonthWarningOpen(false);
-  }, [initialYear, initialMonth]);
+  }, [initialYear, initialMonth, initialScope]);
 
   React.useEffect(() => {
     if (!isOpen) return;
@@ -135,13 +203,36 @@ export default function DeclareMonthlyFeedModal({
     if (!Number.isFinite(yearNum) || !Number.isFinite(monthNum)) return;
     let cancelled = false;
     (async () => {
+      try {
+        const rows = await feedConsumptionMonthlyService.getAllForPeriod(
+          organizationId,
+          yearNum,
+          monthNum
+        );
+        if (!cancelled) setMonthDeclarations(rows);
+      } catch (e) {
+        console.error('Error loading month feed declarations:', e);
+        if (!cancelled) setMonthDeclarations([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, organizationId, yearNum, monthNum]);
+
+  React.useEffect(() => {
+    if (!isOpen || !organizationId) return;
+    if (!Number.isFinite(yearNum) || !Number.isFinite(monthNum)) return;
+    let cancelled = false;
+    (async () => {
       setLoadingExisting(true);
       try {
+        const gallineroParam = scopeGallineroId === FARM_SCOPE ? null : scopeGallineroId;
         const row = await feedConsumptionMonthlyService.getByPeriod(
           organizationId,
           yearNum,
           monthNum,
-          null
+          gallineroParam
         );
         if (cancelled) return;
         setExisting(row);
@@ -165,9 +256,15 @@ export default function DeclareMonthlyFeedModal({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, organizationId, yearNum, monthNum]);
+  }, [isOpen, organizationId, yearNum, monthNum, scopeGallineroId]);
 
   const persist = async () => {
+    const conflict = feedConsumptionScopeConflict(scopeGallineroId, monthDeclarations, existing?.id);
+    if (conflict) {
+      setError(conflict);
+      return;
+    }
+
     const kg = parseFloat(kgConsumed.replace(',', '.'));
     if (!Number.isFinite(yearNum) || !Number.isFinite(monthNum) || monthNum < 1 || monthNum > 12) {
       setError('Elegí un mes y año válidos.');
@@ -180,15 +277,17 @@ export default function DeclareMonthlyFeedModal({
     try {
       setSaving(true);
       setError('');
+      const gallineroParam = scopeGallineroId === FARM_SCOPE ? null : scopeGallineroId;
       const saved = await feedConsumptionMonthlyService.upsert(
         organizationId,
         yearNum,
         monthNum,
         kg,
         notes.trim() || null,
-        null,
-        activeHens > 0 ? activeHens : null
+        gallineroParam,
+        scopeHens > 0 ? scopeHens : null
       );
+      await reloadMonthDeclarations();
       setCurrentMonthWarningOpen(false);
       await onSaved(saved);
       onClose();
@@ -202,12 +301,48 @@ export default function DeclareMonthlyFeedModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (scopeConflict) {
+      setError(scopeConflict);
+      return;
+    }
     if (isCurrentCalendarMonth(yearNum, monthNum)) {
       setCurrentMonthWarningOpen(true);
       return;
     }
     await persist();
   };
+
+  const handleDelete = async () => {
+    if (!existing || !organizationId) return;
+    const scopeName =
+      existing.gallinero_id == null
+        ? 'Toda la granja'
+        : gallineroNameById.get(existing.gallinero_id) ?? 'este gallinero';
+    if (
+      !window.confirm(
+        `¿Eliminar la declaración de ${scopeName} (${periodLabel}, ${Number(existing.kg_consumed).toFixed(1)} kg)?`
+      )
+    ) {
+      return;
+    }
+    try {
+      setDeleting(true);
+      setError('');
+      await feedConsumptionMonthlyService.delete(organizationId, existing.id);
+      setExisting(null);
+      setKgConsumed('');
+      setNotes('');
+      await reloadMonthDeclarations();
+      await onDeleted?.();
+    } catch (e) {
+      console.error('Error deleting feed consumption:', e);
+      setError(formatUnknownError(e, 'No se pudo eliminar la declaración.'));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const displayError = scopeConflict ?? error;
 
   return (
     <>
@@ -242,10 +377,65 @@ export default function DeclareMonthlyFeedModal({
             />
           </div>
 
+          <Select
+            label="Alcance"
+            options={scopeOptions}
+            value={scopeGallineroId}
+            onChange={(e) => {
+              setScopeGallineroId(e.target.value);
+              setError('');
+            }}
+            disabled={loadingExisting || saving}
+          />
+
           <p className="text-sm text-gray-600">
-            Alcance: <strong>Toda la granja</strong>
-            {activeHens > 0 ? ` · ${activeHens} aves activas` : ''}
+            Alcance: <strong>{scopeLabel}</strong>
+            {scopeHens > 0 ? ` · ${scopeHens} aves activas` : ''}
           </p>
+
+          {scopeConflict ? (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+              {scopeConflict}
+            </div>
+          ) : null}
+
+          {monthDeclarations.length > 0 ? (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800">
+              <p className="font-medium text-slate-900">Declaraciones de {periodLabel}</p>
+              <ul className="mt-2 space-y-1">
+                {monthDeclarations.map((row) => {
+                  const label =
+                    row.gallinero_id == null
+                      ? 'Toda la granja'
+                      : gallineroNameById.get(row.gallinero_id) ?? 'Gallinero';
+                  const isCurrent =
+                    (row.gallinero_id == null && scopeGallineroId === FARM_SCOPE) ||
+                    row.gallinero_id === scopeGallineroId;
+                  return (
+                    <li key={row.id} className="flex flex-wrap items-center justify-between gap-2">
+                      <span>
+                        <strong>{label}</strong> · {Number(row.kg_consumed).toFixed(1)} kg
+                        {isCurrent ? ' (actual)' : ''}
+                      </span>
+                      {!isCurrent ? (
+                        <button
+                          type="button"
+                          className="text-xs font-medium text-blue-700 underline"
+                          onClick={() => {
+                            setScopeGallineroId(row.gallinero_id ?? FARM_SCOPE);
+                            setError('');
+                          }}
+                          disabled={loadingExisting || saving || deleting}
+                        >
+                          Ver / editar
+                        </button>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
 
           <Input
             label="Kg consumidos en el mes"
@@ -254,7 +444,7 @@ export default function DeclareMonthlyFeedModal({
             min="0"
             value={kgConsumed}
             onChange={(e) => setKgConsumed(e.target.value)}
-            disabled={loadingExisting || saving}
+            disabled={loadingExisting || saving || Boolean(scopeConflict)}
             required
           />
 
@@ -265,23 +455,47 @@ export default function DeclareMonthlyFeedModal({
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Opcional"
-              disabled={saving}
+              disabled={saving || Boolean(scopeConflict)}
             />
           </div>
 
-          {error ? (
+          {displayError && !scopeConflict ? (
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {error}
+              {displayError}
             </div>
           ) : null}
 
-          <div className="flex gap-2 pt-2">
-            <Button variant="primary" type="submit" className="flex-1" disabled={saving || loadingExisting}>
-              {saving ? 'Guardando…' : 'Guardar'}
-            </Button>
-            <Button variant="secondary" type="button" onClick={onClose} className="flex-1" disabled={saving}>
-              Cancelar
-            </Button>
+          <div className="flex flex-col gap-2 pt-2">
+            <div className="flex gap-2">
+              <Button
+                variant="primary"
+                type="submit"
+                className="flex-1"
+                disabled={saving || loadingExisting || deleting || Boolean(scopeConflict)}
+              >
+                {saving ? 'Guardando…' : 'Guardar'}
+              </Button>
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={onClose}
+                className="flex-1"
+                disabled={saving || deleting}
+              >
+                Cancelar
+              </Button>
+            </div>
+            {existing ? (
+              <Button
+                variant="danger"
+                type="button"
+                className="w-full"
+                disabled={saving || loadingExisting || deleting}
+                onClick={() => void handleDelete()}
+              >
+                {deleting ? 'Eliminando…' : 'Eliminar esta declaración'}
+              </Button>
+            ) : null}
           </div>
         </form>
       </Modal>
@@ -303,7 +517,7 @@ export default function DeclareMonthlyFeedModal({
               type="button"
               variant="primary"
               className="flex-1"
-              disabled={saving}
+              disabled={saving || Boolean(scopeConflict)}
               onClick={() => void persist()}
             >
               {saving ? 'Guardando…' : 'Confirmar y guardar'}

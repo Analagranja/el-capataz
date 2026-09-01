@@ -300,15 +300,7 @@ export function aggregateClosedMonthFeedRates(
 
     const kgConsumed = sumKgForMonthRows(rows);
     const orgLevel = rows.filter((r) => r.gallinero_id == null);
-
-    const hensFromOrg = orgLevel.find((r) => r.hens_snapshot != null && r.hens_snapshot > 0);
-    const hensFromAny = rows.find((r) => r.hens_snapshot != null && r.hens_snapshot > 0);
-    const hens =
-      hensFromOrg?.hens_snapshot != null && hensFromOrg.hens_snapshot > 0
-        ? hensFromOrg.hens_snapshot
-        : hensFromAny?.hens_snapshot != null && hensFromAny.hens_snapshot > 0
-          ? hensFromAny.hens_snapshot
-          : activeHensFallback;
+    const hens = resolveHensForMonthRows(rows, activeHensFallback);
 
     if (kgConsumed <= 0 || hens <= 0) continue;
     out.push({
@@ -329,6 +321,73 @@ export function sumKgForMonthRows(rows: FeedConsumptionMonthly[]): number {
   const orgLevel = rows.filter((r) => r.gallinero_id == null);
   const kgSource = orgLevel.length > 0 ? orgLevel : rows;
   return kgSource.reduce((sum, r) => sum + Math.max(0, Number(r.kg_consumed) || 0), 0);
+}
+
+/**
+ * Aves para g/ave/día de un mes:
+ * - Con fila org → hens_snapshot org, o fallback granja.
+ * - Solo por gallinero → suma hens_snapshot de cada fila, o fallback granja.
+ */
+export function resolveHensForMonthRows(
+  rows: FeedConsumptionMonthly[],
+  activeHensFallback: number
+): number {
+  const orgLevel = rows.filter((r) => r.gallinero_id == null);
+  if (orgLevel.length > 0) {
+    const hensFromOrg = orgLevel.find((r) => r.hens_snapshot != null && r.hens_snapshot > 0);
+    if (hensFromOrg?.hens_snapshot != null && hensFromOrg.hens_snapshot > 0) {
+      return hensFromOrg.hens_snapshot;
+    }
+    return Math.max(0, Math.floor(Number(activeHensFallback) || 0));
+  }
+  let sum = 0;
+  let any = false;
+  for (const r of rows) {
+    if (r.hens_snapshot != null && r.hens_snapshot > 0) {
+      sum += r.hens_snapshot;
+      any = true;
+    }
+  }
+  if (any) return sum;
+  return Math.max(0, Math.floor(Number(activeHensFallback) || 0));
+}
+
+export type AggregatedMonthFeedDeclaration = {
+  kgConsumed: number;
+  hens: number;
+  gramsPerHenDay: number | null;
+  /** org = fila granja general; gallineros = suma por gallinero; none = sin datos */
+  mode: 'org' | 'gallineros' | 'none';
+};
+
+/** Agrega declaraciones de un mes para UI/costos (respeta anti-dobleconteo org vs gallineros). */
+export function aggregateMonthFeedDeclaration(
+  consumptions: FeedConsumptionMonthly[],
+  year: number,
+  month: number,
+  activeHensFallback: number
+): AggregatedMonthFeedDeclaration {
+  const rows = consumptions.filter(
+    (c) => c.year === year && c.month === month && (Number(c.kg_consumed) || 0) > 0
+  );
+  if (rows.length === 0) {
+    return { kgConsumed: 0, hens: 0, gramsPerHenDay: null, mode: 'none' };
+  }
+  const kgConsumed = sumKgForMonthRows(rows);
+  if (kgConsumed <= 0) {
+    return { kgConsumed: 0, hens: 0, gramsPerHenDay: null, mode: 'none' };
+  }
+  const orgLevel = rows.filter((r) => r.gallinero_id == null);
+  const hens = resolveHensForMonthRows(rows, activeHensFallback);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const gramsPerHenDay =
+    daysInMonth > 0 && hens > 0 ? (kgConsumed * 1000) / (daysInMonth * hens) : null;
+  return {
+    kgConsumed,
+    hens,
+    gramsPerHenDay,
+    mode: orgLevel.length > 0 ? 'org' : 'gallineros',
+  };
 }
 
 /**
