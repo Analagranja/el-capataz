@@ -21,6 +21,8 @@ type AuthContextValue = {
   loading: boolean;
   /** true después de intentar cargar la org para el usuario de la sesión actual (evita pantalla de error antes del fetch). */
   organizationResolved: boolean;
+  /** Refresh de org con sesión ya resuelta (no desmonta AppShell). */
+  orgSyncing: boolean;
   organizationMissing: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (
@@ -103,26 +105,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const roleLoadSeq = useRef(0);
   const orgLoadSeq = useRef(0);
   const [organizationResolved, setOrganizationResolved] = useState(false);
+  const [orgSyncing, setOrgSyncing] = useState(false);
+  /** userId cuya org ya se resolvió con organizationId; null = primera carga / login / org no confirmada. */
+  const resolvedUserIdRef = useRef<string | null>(null);
 
   const loadOrganization = useCallback(async (userId: string) => {
     const seq = ++orgLoadSeq.current;
-    setOrganizationResolved(false);
+    const keepAlive = resolvedUserIdRef.current === userId;
+    if (keepAlive) {
+      setOrgSyncing(true);
+    } else {
+      setOrganizationResolved(false);
+    }
     try {
       await ensureFarmOrganizationFromSession(userId);
       const { organizationId: oid, organizationName: oname } = await fetchMembership(userId);
       if (seq !== orgLoadSeq.current) return;
+      if (keepAlive && !oid) {
+        console.error('Error loading organization: membership unavailable during session refresh');
+        return;
+      }
       setOrganizationId(oid);
       setOrganizationName(oname);
       setOrganizationMissing(!oid);
+      resolvedUserIdRef.current = oid ? userId : null;
     } catch (error) {
       console.error('Error loading organization:', error);
       if (seq !== orgLoadSeq.current) return;
+      if (keepAlive) {
+        return;
+      }
       setOrganizationId(null);
       setOrganizationName(null);
       setOrganizationMissing(true);
+      resolvedUserIdRef.current = null;
     } finally {
       if (seq === orgLoadSeq.current) {
-        setOrganizationResolved(true);
+        if (keepAlive) {
+          setOrgSyncing(false);
+        } else {
+          setOrganizationResolved(true);
+        }
       }
     }
   }, []);
@@ -176,11 +199,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         roleLoadSeq.current += 1;
         orgLoadSeq.current += 1;
+        resolvedUserIdRef.current = null;
         setRole('admin');
         setOrganizationId(null);
         setOrganizationName(null);
         setOrganizationMissing(false);
         setOrganizationResolved(false);
+        setOrgSyncing(false);
       }
     });
 
@@ -212,12 +237,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.error('Error getting initial session:', error);
         roleLoadSeq.current += 1;
         orgLoadSeq.current += 1;
+        resolvedUserIdRef.current = null;
         setSession(null);
         setRole('admin');
         setOrganizationId(null);
         setOrganizationName(null);
         setOrganizationMissing(false);
         setOrganizationResolved(false);
+        setOrgSyncing(false);
       }
     };
 
@@ -322,8 +349,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo(() => ({
     session, user: session?.user ?? null, role, organizationId, organizationName,
-    loading, organizationResolved, organizationMissing, signIn, signUp, signOut, refreshOrganization
-  }), [session, role, organizationId, organizationName, loading, organizationResolved, organizationMissing, signIn, signUp, signOut, refreshOrganization]);
+    loading, organizationResolved, orgSyncing, organizationMissing, signIn, signUp, signOut, refreshOrganization
+  }), [session, role, organizationId, organizationName, loading, organizationResolved, orgSyncing, organizationMissing, signIn, signUp, signOut, refreshOrganization]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

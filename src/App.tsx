@@ -126,6 +126,7 @@ function App() {
     organizationId,
     organizationMissing,
     organizationResolved,
+    orgSyncing,
     refreshOrganization,
     signOut,
   } = useAuth();
@@ -175,7 +176,19 @@ function App() {
     );
   }
 
-  return <AppShell />;
+  return (
+    <>
+      <AppShell />
+      {orgSyncing ? (
+        <div className="pointer-events-none fixed top-3 left-1/2 z-50 -translate-x-1/2">
+          <div className="flex items-center gap-2 rounded-full border border-capataz-forest/20 bg-white/95 px-3 py-1.5 text-xs font-medium text-gray-600 shadow-md">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-capataz-forest" />
+            Sincronizando…
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
 }
 
 export default App;
