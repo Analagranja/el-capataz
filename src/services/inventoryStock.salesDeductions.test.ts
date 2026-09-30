@@ -40,6 +40,7 @@ function sale(type: SaleType, quantity: number, date = '2026-07-20'): Sale {
     price_per_unit: 1,
     total_price: quantity,
     notes: '',
+    is_paid: true,
     created_at: `${date}T15:00:00.000Z`,
   };
 }

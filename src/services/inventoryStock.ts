@@ -138,6 +138,7 @@ function mapSaleRow(row: Record<string, unknown>): Sale {
     price_per_unit: Number(row.unit_price ?? row.price_per_unit ?? 0),
     total_price: Number(row.total_price || 0),
     notes: (row.notes as string) || '',
+    is_paid: row.is_paid !== false,
     created_at: row.created_at as string,
   };
 }

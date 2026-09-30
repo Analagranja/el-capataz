@@ -19,7 +19,7 @@ import Modal from '../components/ui/Modal';
 import Toast from '../components/ui/Toast';
 import Table from '../components/ui/Table';
 import Badge from '../components/ui/Badge';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, ChevronDown, ChevronRight, Check } from 'lucide-react';
 import { formatArs } from '../utils/formatCurrency';
 import { todayLocalYmdParts } from '../utils/statsPeriod';
 import {
@@ -28,6 +28,11 @@ import {
   parseFormInt,
   safeFormNumber,
 } from '../utils/formNumbers';
+import {
+  UNASSIGNED_CUSTOMER_LABEL,
+  groupUnpaidSalesByCustomer,
+  unpaidGrandTotal,
+} from '../utils/unpaidSales';
 
 const SALE_TYPE_OPTIONS: Array<{ value: Sale['type']; label: string }> = [
   { value: 'maple', label: 'Maple (30 huevos)' },
@@ -68,6 +73,11 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
     String(new Date().getMonth() + 1).padStart(2, '0')
   );
   const [loading, setLoading] = React.useState(true);
+  const [activeTab, setActiveTab] = React.useState<'ventas' | 'cuenta'>('ventas');
+  const [unpaidSales, setUnpaidSales] = React.useState<Sale[]>([]);
+  const [unpaidLoading, setUnpaidLoading] = React.useState(false);
+  const [expandedGroups, setExpandedGroups] = React.useState<Record<string, boolean>>({});
+  const [markingPaidId, setMarkingPaidId] = React.useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [isQuickCustomerFormOpen, setIsQuickCustomerFormOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
@@ -82,6 +92,7 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
     quantity: 0,
     price_per_unit: 0,
     notes: '',
+    is_paid: true,
   });
   const [newCustomerData, setNewCustomerData] = React.useState({
     name: '',
@@ -95,9 +106,6 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
     try {
       const data = await customersService.getAll(organizationId);
       setCustomers(data);
-      if (!editingId && data.length > 0) {
-        setFormData((prev) => ({ ...prev, customer_id: prev.customer_id || data[0].id }));
-      }
     } catch (error) {
       console.error('Error loading customers:', error);
     }
@@ -106,7 +114,6 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
   const loadSales = async () => {
     if (!organizationId) return;
     try {
-      setLoading(true);
       const fromDate = `${selectedYear}-${selectedMonth}-01`;
       const lastDay = new Date(Number(selectedYear), Number(selectedMonth), 0).getDate();
       const toDate = `${selectedYear}-${selectedMonth}-${String(lastDay).padStart(2, '0')}`;
@@ -119,6 +126,19 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
     }
   };
 
+  const loadUnpaid = async () => {
+    if (!organizationId) return;
+    try {
+      setUnpaidLoading(true);
+      const data = await salesService.getUnpaid(organizationId);
+      setUnpaidSales(data);
+    } catch (error) {
+      console.error('Error loading unpaid sales:', error);
+    } finally {
+      setUnpaidLoading(false);
+    }
+  };
+
   React.useEffect(() => {
     loadSales();
   }, [organizationId, selectedYear, selectedMonth]);
@@ -126,6 +146,12 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
   React.useEffect(() => {
     loadCustomers();
   }, [organizationId]);
+
+  React.useEffect(() => {
+    if (activeTab === 'cuenta') {
+      loadUnpaid();
+    }
+  }, [organizationId, activeTab]);
 
   const handleOpenModal = (sale?: Sale) => {
     if (sale) {
@@ -137,6 +163,7 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
         quantity: safeFormNumber(sale.quantity, 0),
         price_per_unit: safeFormNumber(sale.price_per_unit, 0),
         notes: sale.notes || '',
+        is_paid: sale.is_paid !== false,
       });
     } else {
       setEditingId(null);
@@ -147,6 +174,7 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
         quantity: 0,
         price_per_unit: 0,
         notes: '',
+        is_paid: true,
       });
     }
     setIsQuickCustomerFormOpen(false);
@@ -181,7 +209,7 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
   };
 
   const persistSale = async () => {
-    if (!organizationId || !formData.customer_id) return;
+    if (!organizationId) return;
     setSaving(true);
     setError('');
     try {
@@ -194,7 +222,8 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
           formData.type,
           formData.quantity,
           formData.price_per_unit,
-          formData.notes
+          formData.notes,
+          formData.is_paid
         );
       } else {
         await salesService.create(
@@ -204,10 +233,14 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
           formData.type,
           formData.quantity,
           formData.price_per_unit,
-          formData.notes
+          formData.notes,
+          formData.is_paid
         );
       }
       loadSales();
+      if (activeTab === 'cuenta' || !formData.is_paid) {
+        loadUnpaid();
+      }
       handleCloseModal();
     } catch (err: any) {
       console.error('Error saving sale:', err);
@@ -223,7 +256,7 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    if (!organizationId || !formData.customer_id) return;
+    if (!organizationId) return;
 
     const editingSale = editingId ? sales.find((s) => s.id === editingId) ?? null : null;
 
@@ -295,6 +328,9 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
       try {
         await salesService.delete(organizationId, id);
         loadSales();
+        if (activeTab === 'cuenta') {
+          loadUnpaid();
+        }
       } catch (error) {
         console.error('Error deleting sale:', error);
       }
@@ -319,6 +355,31 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
     maple_mediano: 30,
     maple_chico: 30,
   };
+
+  const handleMarkPaid = async (saleId: string) => {
+    if (!organizationId) return;
+    if (!window.confirm('¿Marcar esta venta como pagada?')) return;
+    setMarkingPaidId(saleId);
+    try {
+      await salesService.setPaid(organizationId, saleId, true);
+      setUnpaidSales((prev) => prev.filter((s) => s.id !== saleId));
+      setSales((prev) => prev.map((s) => (s.id === saleId ? { ...s, is_paid: true } : s)));
+    } catch (error) {
+      console.error('Error marking sale as paid:', error);
+    } finally {
+      setMarkingPaidId(null);
+    }
+  };
+
+  const toggleGroup = (key: string) => {
+    setExpandedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const unpaidGroups = React.useMemo(
+    () => groupUnpaidSalesByCustomer(unpaidSales),
+    [unpaidSales]
+  );
+  const unpaidTotal = unpaidGrandTotal(unpaidGroups);
 
   const totalSales = sales.reduce((sum, s) => sum + s.total_price, 0);
   const totalEggsSold = sales.reduce(
@@ -351,6 +412,127 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
         </Button>
       </div>
 
+      <div className="flex border-b border-gray-200">
+        <button
+          type="button"
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            activeTab === 'ventas'
+              ? 'border-green-600 text-green-700'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+          onClick={() => setActiveTab('ventas')}
+        >
+          Ventas
+        </button>
+        <button
+          type="button"
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            activeTab === 'cuenta'
+              ? 'border-green-600 text-green-700'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+          onClick={() => setActiveTab('cuenta')}
+        >
+          Cuenta corriente
+        </button>
+      </div>
+
+      {activeTab === 'cuenta' ? (
+        <>
+          <Card padding="md" hover>
+            <div>
+              <p className="text-sm text-gray-600 mb-1">Pendientes de cobro</p>
+              <p className="text-2xl font-bold text-gray-900">{formatArs(unpaidTotal)}</p>
+            </div>
+          </Card>
+
+          {unpaidLoading ? (
+            <div className="p-8 text-center text-gray-500">Cargando...</div>
+          ) : unpaidGroups.length === 0 ? (
+            <Card padding="md">
+              <p className="text-sm text-gray-500 text-center py-6">
+                No hay ventas pendientes de cobro.
+              </p>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {unpaidGroups.map((group) => {
+                const expanded = !!expandedGroups[group.key];
+                return (
+                  <Card key={group.key} padding="none">
+                    <button
+                      type="button"
+                      className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50"
+                      onClick={() => toggleGroup(group.key)}
+                      aria-expanded={expanded}
+                    >
+                      <span className="flex items-center gap-2 min-w-0">
+                        {expanded ? (
+                          <ChevronDown size={18} className="shrink-0 text-gray-500" />
+                        ) : (
+                          <ChevronRight size={18} className="shrink-0 text-gray-500" />
+                        )}
+                        <span className="font-semibold text-gray-900 truncate">
+                          {group.customerName}
+                        </span>
+                        <span className="text-sm text-gray-500 shrink-0">
+                          ({group.sales.length})
+                        </span>
+                      </span>
+                      <span className="font-semibold text-gray-900 tabular-nums ml-4">
+                        {formatArs(group.totalOwed)}
+                      </span>
+                    </button>
+                    {expanded && (
+                      <div className="border-t border-gray-100">
+                        <Table
+                          columns={[
+                            { key: 'date', label: 'Fecha' },
+                            {
+                              key: 'type',
+                              label: 'Tipo',
+                              render: (value) => (
+                                <Badge label={typeLabels[value as keyof typeof typeLabels]} />
+                              ),
+                            },
+                            { key: 'quantity', label: 'Cantidad' },
+                            {
+                              key: 'total_price',
+                              label: 'Total',
+                              render: (value) => formatArs(value as number),
+                            },
+                            {
+                              key: 'id',
+                              label: 'Acciones',
+                              render: (_, row: Sale) => (
+                                <Button
+                                  variant="success"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void handleMarkPaid(row.id);
+                                  }}
+                                  type="button"
+                                  disabled={markingPaidId === row.id}
+                                >
+                                  <Check size={16} />
+                                  {markingPaidId === row.id ? 'Guardando…' : 'Marcar pagada'}
+                                </Button>
+                              ),
+                            },
+                          ]}
+                          data={group.sales}
+                        />
+                      </div>
+                    )}
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card padding="md" hover>
           <div>
@@ -400,7 +582,7 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
             {
               key: 'customer_name',
               label: 'Cliente',
-              render: (value) => value || 'Sin cliente',
+              render: (value) => value || UNASSIGNED_CUSTOMER_LABEL,
             },
             {
               key: 'type',
@@ -417,6 +599,16 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
               key: 'total_price',
               label: 'Total',
               render: (value) => formatArs(value as number),
+            },
+            {
+              key: 'is_paid',
+              label: 'Cobro',
+              render: (value) =>
+                value ? (
+                  <Badge label="Pagado" variant="success" />
+                ) : (
+                  <Badge label="Pendiente" variant="warning" />
+                ),
             },
             {
               key: 'notes',
@@ -441,6 +633,8 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
           data={sales}
         />
       </Card>
+        </>
+      )}
 
       <Modal
         isOpen={isModalOpen}
@@ -466,13 +660,15 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
               <div className="flex-1">
                 <Select
                   label="Cliente"
-                  options={customers.map((c) => ({
-                    value: c.id,
-                    label: c.name,
-                  }))}
+                  options={[
+                    { value: '', label: UNASSIGNED_CUSTOMER_LABEL },
+                    ...customers.map((c) => ({
+                      value: c.id,
+                      label: c.name,
+                    })),
+                  ]}
                   value={formData.customer_id}
                   onChange={(e) => setFormData({ ...formData, customer_id: e.target.value })}
-                  required
                 />
               </div>
               <Button
@@ -562,6 +758,19 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
               )}
             </p>
           </div>
+
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              className="rounded border-gray-300 text-green-600 focus:ring-green-500"
+              checked={formData.is_paid}
+              onChange={(e) => setFormData({ ...formData, is_paid: e.target.checked })}
+            />
+            <span className="text-sm font-medium text-gray-700">Pagado</span>
+            <span className="text-xs text-gray-500">
+              {formData.is_paid ? 'La venta queda cobrada.' : 'Queda pendiente en cuenta corriente.'}
+            </span>
+          </label>
 
           <Input
             label="Notas"

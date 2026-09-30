@@ -80,6 +80,8 @@ export interface Sale {
   price_per_unit: number;
   total_price: number;
   notes?: string;
+  /** true = cobrada. false = pendiente (cuenta corriente). Default true. */
+  is_paid: boolean;
   created_at: string;
 }
 
@@ -111,6 +113,7 @@ export interface Organization {
   id: string;
   name: string;
   created_at: string;
+  is_paying_customer?: boolean;
 }
 
 export interface Customer {

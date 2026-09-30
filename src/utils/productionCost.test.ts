@@ -39,6 +39,7 @@ function sale(type: Sale['type'], quantity: number, date: string): Sale {
     price_per_unit: 1,
     total_price: quantity,
     notes: '',
+    is_paid: true,
     created_at: `${date}T12:00:00.000Z`,
   };
 }
