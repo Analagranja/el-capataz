@@ -19,8 +19,9 @@ import Modal from '../components/ui/Modal';
 import Toast from '../components/ui/Toast';
 import Table from '../components/ui/Table';
 import Badge from '../components/ui/Badge';
-import { Plus, Pencil, Trash2, ChevronDown, ChevronRight, Check } from 'lucide-react';
+import { Plus, Pencil, Trash2, ChevronDown, ChevronRight, Check, FileSpreadsheet } from 'lucide-react';
 import { formatArs } from '../utils/formatCurrency';
+import { downloadSalesExcel } from '../utils/exportSalesOnly';
 import { todayLocalYmdParts } from '../utils/statsPeriod';
 import {
   numberInputValue,
@@ -559,7 +560,7 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
       </div>
 
       <Card padding="md">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-4 md:items-end">
           <Select
             label="Año"
             options={yearOptions}
@@ -572,6 +573,14 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
             value={selectedMonth}
             onChange={(e) => setSelectedMonth(e.target.value)}
           />
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => downloadSalesExcel(sales, periodLabel)}
+          >
+            <FileSpreadsheet size={20} />
+            Exportar
+          </Button>
         </div>
       </Card>
 
