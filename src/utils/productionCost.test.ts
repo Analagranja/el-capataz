@@ -7,6 +7,7 @@ import type { Expense, FeedConsumptionMonthly, Sale } from '../types';
 import {
   computeMonthProductionCost,
   computePeriodProductionCost,
+  feedUnitCostForMonth,
   normalizeAmortizationMonths,
   otherAmortizedCostInMonth,
   weightedAvgFeedCostPerKg,
@@ -88,6 +89,57 @@ check('promedio alimento solo compras ≤ fin de mes', () => {
   assert.equal(weightedAvgFeedCostPerKg(expenses, '2026-07-31'), 100);
   // Fin agosto: ambas → 150 $/kg
   assert.equal(weightedAvgFeedCostPerKg(expenses, '2026-08-31'), 150);
+});
+
+check('feedUnitCostForMonth: mes actual ignora historial', () => {
+  const expenses = [
+    expense({ description: 'Alimento', date: '2026-06-10', quantity_kg: 100, total_price: 10000 }),
+    expense({ description: 'Alimento', date: '2026-08-01', quantity_kg: 100, total_price: 20000 }),
+    expense({ description: 'Alimento', date: '2026-08-20', quantity_kg: 50, total_price: 5000 }),
+  ];
+  // Agosto: (20000+5000)/(100+50) = 166.666...; no mezcla junio
+  assert.equal(feedUnitCostForMonth(expenses, 2026, 8), 25000 / 150);
+});
+
+check('feedUnitCostForMonth: fallback al último mes anterior con compras', () => {
+  const expenses = [
+    expense({ description: 'Alimento', date: '2026-04-05', quantity_kg: 80, total_price: 8000 }),
+    expense({ description: 'Alimento', date: '2026-06-10', quantity_kg: 100, total_price: 10000 }),
+  ];
+  // Julio sin compras → junio (no abril)
+  assert.equal(feedUnitCostForMonth(expenses, 2026, 7), 100);
+});
+
+check('feedUnitCostForMonth: sin historial → null', () => {
+  assert.equal(feedUnitCostForMonth([], 2026, 7), null);
+  assert.equal(
+    feedUnitCostForMonth(
+      [expense({ description: 'Alimento', date: '2026-08-01', quantity_kg: 10, total_price: 1000 })],
+      2026,
+      7
+    ),
+    null
+  );
+});
+
+check('computeMonthProductionCost alimento usa $/kg del mes, no acumulado', () => {
+  const expenses = [
+    expense({ description: 'Alimento', date: '2026-06-10', quantity_kg: 100, total_price: 10000 }),
+    expense({ description: 'Alimento', date: '2026-08-01', quantity_kg: 100, total_price: 20000 }),
+  ];
+  const agosto = computeMonthProductionCost(2026, 8, expenses, [], [consumption(2026, 8, 50)]);
+  assert.equal(agosto.alimento, 50 * 200);
+  assert.equal(agosto.warnings.missingFeedUnitCost, false);
+
+  const julio = computeMonthProductionCost(2026, 7, expenses, [], [consumption(2026, 7, 50)]);
+  assert.equal(julio.alimento, 50 * 100);
+});
+
+check('sin ninguna compra previa + consumo → 0 + missingFeedUnitCost', () => {
+  const month = computeMonthProductionCost(2026, 7, [], [], [consumption(2026, 7, 40)]);
+  assert.equal(month.alimento, 0);
+  assert.equal(month.warnings.missingFeedUnitCost, true);
+  assert.equal(month.warnings.missingFeedConsumption, false);
 });
 
 check('promedio maples por ítem', () => {

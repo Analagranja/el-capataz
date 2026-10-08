@@ -1,7 +1,8 @@
 /**
  * Costo de producción para Estadísticas / export (no contabilidad de caja).
  *
- * - Alimento: $/kg promedio (compras ≤ fin de mes) × kg consumidos del mes
+ * - Alimento: $/kg del mes (compras de ese mes; si no hay, del último mes
+ *   anterior con compras) × kg consumidos del mes
  * - Maples: $/u promedio por ítem × unidades vendidas del mes
  * - Otros: total_price / amortization_months en cada mes del prorrateo
  */
@@ -104,6 +105,60 @@ export function weightedAvgFeedCostPerKg(
   return totalPrice / totalKg;
 }
 
+function alimentoKgAndPriceInMonth(
+  expenses: Expense[],
+  year: number,
+  month: number
+): { totalKg: number; totalPrice: number } {
+  const prefix = ymKey(year, month);
+  let totalKg = 0;
+  let totalPrice = 0;
+  for (const e of expenses) {
+    if (!isAlimentoExpense(e)) continue;
+    if (!String(e.date || '').startsWith(prefix)) continue;
+    const kg = Number(e.quantity_kg) || 0;
+    const price = Number(e.total_price) || 0;
+    if (!(kg > 0) || !(price >= 0)) continue;
+    totalKg += kg;
+    totalPrice += price;
+  }
+  return { totalKg, totalPrice };
+}
+
+/**
+ * $/kg de Alimento para un mes calendario:
+ * 1) promedio ponderado de compras de ESE mes;
+ * 2) si no hay, del último mes anterior con compras;
+ * 3) si no hay historial, null (mismo fallback que missingFeedUnitCost).
+ */
+export function feedUnitCostForMonth(
+  expenses: Expense[],
+  year: number,
+  month: number
+): number | null {
+  const current = alimentoKgAndPriceInMonth(expenses, year, month);
+  if (current.totalKg > 0) return current.totalPrice / current.totalKg;
+
+  const thisMonthStart = `${ymKey(year, month)}-01`;
+  let bestYm: string | null = null;
+  for (const e of expenses) {
+    if (!isAlimentoExpense(e)) continue;
+    const d = String(e.date || '').slice(0, 10);
+    if (d.length < 7 || !(d < thisMonthStart)) continue;
+    const kg = Number(e.quantity_kg) || 0;
+    const price = Number(e.total_price) || 0;
+    if (!(kg > 0) || !(price >= 0)) continue;
+    const ym = d.slice(0, 7);
+    if (bestYm == null || ym > bestYm) bestYm = ym;
+  }
+  if (!bestYm) return null;
+  const py = Number(bestYm.slice(0, 4));
+  const pm = Number(bestYm.slice(5, 7));
+  const prior = alimentoKgAndPriceInMonth(expenses, py, pm);
+  if (!(prior.totalKg > 0)) return null;
+  return prior.totalPrice / prior.totalKg;
+}
+
 /** $/unidad ponderado por ítem de packaging (compras Maples con qty+key). */
 export function weightedAvgPackagingCostByItem(
   expenses: Expense[],
@@ -192,7 +247,7 @@ export function computeMonthProductionCost(
 ): MonthProductionCost {
   const asOf = monthEndYmd(year, month);
   const kg = feedKgConsumedInMonth(consumptions, year, month);
-  const feedAvg = weightedAvgFeedCostPerKg(expenses, asOf);
+  const feedAvg = feedUnitCostForMonth(expenses, year, month);
   const missingFeedConsumption = !(kg > 0);
   const missingFeedUnitCost = kg > 0 && feedAvg == null;
   const alimento = kg > 0 && feedAvg != null ? kg * feedAvg : 0;
