@@ -68,46 +68,100 @@ export function mapleImpactForSale(
   return null;
 }
 
+function unclassifiedEggsProduced(p: ProductionRecord): number {
+  const total = Math.max(0, Number(p.eggs_count) || 0);
+  const large = Math.max(0, Number(p.eggs_large) || 0);
+  const medium = Math.max(0, Number(p.eggs_medium) || 0);
+  const small = Math.max(0, Number(p.eggs_small) || 0);
+  return Math.max(0, total - large - medium - small);
+}
+
+function eggBucketsFromProduction(
+  production: ProductionRecord[]
+): Record<EggStockItemKey, number> {
+  return {
+    grande: production.reduce((s, p) => s + Math.max(0, Number(p.eggs_large) || 0), 0),
+    mediano: production.reduce((s, p) => s + Math.max(0, Number(p.eggs_medium) || 0), 0),
+    chico: production.reduce((s, p) => s + Math.max(0, Number(p.eggs_small) || 0), 0),
+    sin_clasificar: production.reduce((s, p) => s + unclassifiedEggsProduced(p), 0),
+  };
+}
+
+function addEggBuckets(
+  a: Record<EggStockItemKey, number>,
+  b: Record<EggStockItemKey, number>
+): Record<EggStockItemKey, number> {
+  return {
+    grande: (a.grande || 0) + (b.grande || 0),
+    mediano: (a.mediano || 0) + (b.mediano || 0),
+    chico: (a.chico || 0) + (b.chico || 0),
+    sin_clasificar: (a.sin_clasificar || 0) + (b.sin_clasificar || 0),
+  };
+}
+
+/**
+ * Descuenta ventas sobre un snapshot de huevos (producción o baseline + producción).
+ * Maple por tamaño: primero ese bucket hasta 0; el faltante sale de Sin clasificar
+ * hasta 0. Ventas genéricas (maple/docena/pack15/…) solo tocan Sin clasificar.
+ * Ningún tamaño queda negativo.
+ */
+function settleEggStock(
+  start: Record<EggStockItemKey, number>,
+  sales: Sale[]
+): Record<EggStockItemKey, number> {
+  let soldGrande = 0;
+  let soldMediano = 0;
+  let soldChico = 0;
+  let soldTotal = 0;
+  for (const s of sales) {
+    const impact = eggImpactForSale(s.type, s.quantity);
+    soldTotal += impact.eggs;
+    if (impact.key === 'grande') soldGrande += impact.eggs;
+    else if (impact.key === 'mediano') soldMediano += impact.eggs;
+    else if (impact.key === 'chico') soldChico += impact.eggs;
+  }
+
+  const grande = Math.max(0, (start.grande || 0) - soldGrande);
+  const mediano = Math.max(0, (start.mediano || 0) - soldMediano);
+  const chico = Math.max(0, (start.chico || 0) - soldChico);
+  const totalStart =
+    (start.grande || 0) +
+    (start.mediano || 0) +
+    (start.chico || 0) +
+    (start.sin_clasificar || 0);
+  const stockDisponible = Math.max(0, totalStart - soldTotal);
+  const sin_clasificar = Math.max(0, stockDisponible - grande - mediano - chico);
+  return { grande, mediano, chico, sin_clasificar };
+}
+
 /**
  * Stock de huevos acumulado (histórico completo). Usado por Inventario y Panel.
  *
- * - Cada tamaño (grande/mediano/chico) se agota hasta 0; nunca queda negativo.
- * - El excedente de una sobreventa por tamaño (y las ventas genéricas) se
- *   refleja en "Sin clasificar" vía el residual:
- *   sin_clasificar = stockDisponible − grande − mediano − chico
- *   (ambos lados con piso en 0).
+ * Venta por tamaño: agota ese bucket hasta 0; el faltante se descuenta de
+ * Sin clasificar (también hasta 0). Ningún tamaño queda negativo.
  */
 export function computeEggStock(
   production: ProductionRecord[],
   sales: Sale[]
 ): Record<EggStockItemKey, number> {
-  const totalProducidos = production.reduce((sum, p) => sum + (p.eggs_count || 0), 0);
-  const totalVendidos = sales.reduce(
-    (sum, s) => sum + s.quantity * (EGGS_PER_SALE_TYPE[s.type] || 0),
-    0
+  return settleEggStock(eggBucketsFromProduction(production), sales);
+}
+
+/**
+ * Con línea base: mismos descuentos que computeEggStock, partiendo de
+ * baseline[tamaño] + producción ≥ corte. Sin baseline (null): histórico completo.
+ * productionAfter / salesAfter deben venir ya filtrados por baseline_date cuando hay baseline.
+ */
+export function computeEggStockFromBaseline(
+  productionAfter: ProductionRecord[],
+  salesAfter: Sale[],
+  baselineBySize: Record<EggStockItemKey, number> | null
+): Record<EggStockItemKey, number> {
+  if (!baselineBySize) return computeEggStock(productionAfter, salesAfter);
+  return settleEggStock(
+    addEggBuckets(baselineBySize, eggBucketsFromProduction(productionAfter)),
+    salesAfter
   );
-  const stockDisponible = Math.max(0, totalProducidos - totalVendidos);
-
-  const producedLarge = production.reduce((s, p) => s + (p.eggs_large ?? 0), 0);
-  const producedMedium = production.reduce((s, p) => s + (p.eggs_medium ?? 0), 0);
-  const producedSmall = production.reduce((s, p) => s + (p.eggs_small ?? 0), 0);
-
-  const soldLarge = sales
-    .filter((s) => s.type === 'maple_grande')
-    .reduce((sum, s) => sum + s.quantity * 30, 0);
-  const soldMedium = sales
-    .filter((s) => s.type === 'maple_mediano')
-    .reduce((sum, s) => sum + s.quantity * 30, 0);
-  const soldSmall = sales
-    .filter((s) => s.type === 'maple_chico')
-    .reduce((sum, s) => sum + s.quantity * 30, 0);
-
-  const grande = Math.max(0, producedLarge - soldLarge);
-  const mediano = Math.max(0, producedMedium - soldMedium);
-  const chico = Math.max(0, producedSmall - soldSmall);
-  const sin_clasificar = Math.max(0, stockDisponible - grande - mediano - chico);
-
-  return { grande, mediano, chico, sin_clasificar };
 }
 
 /**

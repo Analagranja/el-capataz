@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import type {
+  EggStockBaseline,
   FeedConsumptionMonthly,
   FeedStockBaseline,
   PackagingItemKey,
@@ -11,6 +12,7 @@ import type {
 import { gallinerosService } from './gallineros';
 import {
   computeEggStock,
+  computeEggStockFromBaseline,
   aggregateClosedMonthFeedRates,
   computeFeedStockFromBaseline,
   computeMapleStock,
@@ -39,6 +41,7 @@ export {
   eggImpactForSale,
   mapleImpactForSale,
   computeEggStock,
+  computeEggStockFromBaseline,
   computeMapleStock,
   computeMapleStockFromBaseline,
   dateOnOrAfter,
@@ -75,6 +78,11 @@ export interface EggInventorySnapshot {
   totalProduced: number;
   /** Huevos equivalentes vendidos en todo el historial. */
   totalSold: number;
+  /** Null = sin apertura; cálculo histórico completo. */
+  baseline: {
+    baselineDate: string;
+    bySize: Record<EggStockItemKey, number>;
+  } | null;
 }
 
 export interface MapleInventorySnapshot {
@@ -169,6 +177,21 @@ function isMissingBaselineTableError(
   );
 }
 
+function mapEggBaselineRow(row: Record<string, unknown>): EggStockBaseline {
+  return {
+    id: row.id as string,
+    organization_id: row.organization_id as string,
+    baseline_date: String(row.baseline_date).slice(0, 10),
+    grande: Math.max(0, Math.floor(Number(row.grande) || 0)),
+    mediano: Math.max(0, Math.floor(Number(row.mediano) || 0)),
+    chico: Math.max(0, Math.floor(Number(row.chico) || 0)),
+    sin_clasificar: Math.max(0, Math.floor(Number(row.sin_clasificar) || 0)),
+    created_by: (row.created_by as string | null) ?? null,
+    created_at: row.created_at as string,
+    updated_at: row.updated_at as string,
+  };
+}
+
 function mapPackagingBaselineRow(row: Record<string, unknown>): PackagingStockBaseline {
   return {
     id: row.id as string,
@@ -234,6 +257,28 @@ async function fetchProduction(organizationId: string): Promise<ProductionRecord
     .eq('organization_id', organizationId);
   if (error) throw error;
   return (data || []) as ProductionRecord[];
+}
+
+async function fetchEggBaseline(
+  organizationId: string
+): Promise<EggStockBaseline | null> {
+  const { data, error } = await supabase
+    .from('egg_stock_baselines')
+    .select(
+      'id, organization_id, baseline_date, grande, mediano, chico, sin_clasificar, created_by, created_at, updated_at'
+    )
+    .eq('organization_id', organizationId)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingBaselineTableError(error, 'egg_stock_baselines')) {
+      console.warn('egg_stock_baselines unavailable; using historic egg stock:', error.message);
+      return null;
+    }
+    throw error;
+  }
+  if (!data) return null;
+  return mapEggBaselineRow(data as Record<string, unknown>);
 }
 
 async function fetchPackagingBaseline(
@@ -318,23 +363,98 @@ function mapConsumptions(rows: Array<Record<string, unknown>>): FeedConsumptionM
 
 /**
  * Inventario automático: stock = entradas − salidas (histórico completo).
- * Packaging puede usar apertura opcional (packaging_stock_baselines).
+ * Packaging, alimento y huevos pueden usar apertura opcional (*_stock_baselines).
  * No usa inventory_counts (tabla queda sin uso; no se elimina).
  */
 export const inventoryStockService = {
   async loadEggInventory(organizationId: string): Promise<EggInventorySnapshot> {
-    const [production, sales] = await Promise.all([
+    const [production, sales, baseline] = await Promise.all([
       fetchProduction(organizationId),
       fetchSales(organizationId),
+      fetchEggBaseline(organizationId),
     ]);
-    const bySize = computeEggStock(production, sales);
+    const bySize = !baseline
+      ? computeEggStock(production, sales)
+      : computeEggStockFromBaseline(
+          production.filter((p) => dateOnOrAfter(p.date, baseline.baseline_date)),
+          sales.filter((s) =>
+            saleAffectsPackagingAfterBaseline(s, baseline.baseline_date, baseline.updated_at)
+          ),
+          {
+            grande: baseline.grande,
+            mediano: baseline.mediano,
+            chico: baseline.chico,
+            sin_clasificar: baseline.sin_clasificar,
+          }
+        );
     const total = bySize.grande + bySize.mediano + bySize.chico + bySize.sin_clasificar;
     const totalProduced = production.reduce((sum, p) => sum + (p.eggs_count || 0), 0);
     const totalSold = sales.reduce(
       (sum, s) => sum + s.quantity * (EGGS_PER_SALE_TYPE[s.type] || 0),
       0
     );
-    return { bySize, total, totalProduced, totalSold };
+    return {
+      bySize,
+      total,
+      totalProduced,
+      totalSold,
+      baseline: baseline
+        ? {
+            baselineDate: baseline.baseline_date,
+            bySize: {
+              grande: baseline.grande,
+              mediano: baseline.mediano,
+              chico: baseline.chico,
+              sin_clasificar: baseline.sin_clasificar,
+            },
+          }
+        : null,
+    };
+  },
+
+  async saveEggBaseline(
+    organizationId: string,
+    createdBy: string | null,
+    input: {
+      baselineDate: string;
+      grande: number;
+      mediano: number;
+      chico: number;
+      sin_clasificar: number;
+    }
+  ): Promise<EggStockBaseline> {
+    const baseline_date = String(input.baselineDate).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(baseline_date)) {
+      throw new Error('Fecha de apertura inválida');
+    }
+    const payload = {
+      organization_id: organizationId,
+      baseline_date,
+      grande: Math.max(0, Math.floor(Number(input.grande) || 0)),
+      mediano: Math.max(0, Math.floor(Number(input.mediano) || 0)),
+      chico: Math.max(0, Math.floor(Number(input.chico) || 0)),
+      sin_clasificar: Math.max(0, Math.floor(Number(input.sin_clasificar) || 0)),
+      created_by: createdBy,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from('egg_stock_baselines')
+      .upsert(payload, { onConflict: 'organization_id' })
+      .select(
+        'id, organization_id, baseline_date, grande, mediano, chico, sin_clasificar, created_by, created_at, updated_at'
+      )
+      .single();
+
+    if (error) {
+      if (isMissingBaselineTableError(error, 'egg_stock_baselines')) {
+        throw new Error(
+          'Falta aplicar la migración de apertura de huevos en la base de datos. Pedile a quien administra el proyecto que ejecute el SQL en Supabase.'
+        );
+      }
+      throw error;
+    }
+    return mapEggBaselineRow(data as Record<string, unknown>);
   },
 
   async loadMapleInventory(organizationId: string): Promise<MapleInventorySnapshot> {

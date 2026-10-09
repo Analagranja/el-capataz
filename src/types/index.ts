@@ -156,6 +156,20 @@ export interface Expense {
 
 export type InventoryCategory = 'eggs' | 'feed' | 'maples';
 
+/** Apertura de huevos: stock físico por tamaño para resetear la línea base. */
+export interface EggStockBaseline {
+  id: string;
+  organization_id: string;
+  baseline_date: string;
+  grande: number;
+  mediano: number;
+  chico: number;
+  sin_clasificar: number;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 /** Apertura de packaging: stock físico declarado para resetear la línea base. */
 export interface PackagingStockBaseline {
   id: string;

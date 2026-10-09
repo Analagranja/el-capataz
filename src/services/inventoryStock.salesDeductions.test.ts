@@ -9,6 +9,7 @@ import {
   availableEggStockForSale,
   availableMapleStockForSale,
   computeEggStock,
+  computeEggStockFromBaseline,
   computeFeedStockKg,
   computeFeedStockFromBaseline,
   computeMapleStock,
@@ -192,6 +193,25 @@ check('sobreventa maple_chico: Chico→0 y excedente sale de Sin clasificar', ()
   assert.equal(stock.grande, 0);
   assert.equal(stock.mediano, 0);
   assert.equal(stock.sin_clasificar, 20);
+});
+
+check('faltante de chicos sale de Sin clasificar (175: 40/32/15/88 − 30 chicos)', () => {
+  const buckets = { grande: 40, mediano: 32, chico: 15, sin_clasificar: 88 };
+  const production: ProductionRecord[] = [
+    eggProd('2026-10-08', { count: 175, large: 40, medium: 32, small: 15 }),
+  ];
+  const sales = [sale('maple_chico', 1)];
+  const historic = computeEggStock(production, sales);
+  const fromBaseline = computeEggStockFromBaseline([], sales, buckets);
+  assert.deepEqual(historic, fromBaseline);
+  assert.equal(historic.grande, 40);
+  assert.equal(historic.mediano, 32);
+  assert.equal(historic.chico, 0);
+  assert.equal(historic.sin_clasificar, 73);
+  assert.equal(
+    historic.grande + historic.mediano + historic.chico + historic.sin_clasificar,
+    145
+  );
 });
 
 check('sobreventa maple_chico solo con Chico (sin balde genérico): ambos en 0', () => {
@@ -402,6 +422,118 @@ check('venta con fecha anterior pero cargada después de la apertura sí descuen
 
   const sameDay = sale('media_docena', 3, '2026-08-04');
   assert.equal(saleAffectsPackagingAfterBaseline(sameDay, '2026-08-04', openedAt), true);
+});
+
+function eggProd(
+  date: string,
+  eggs: { count: number; large?: number; medium?: number; small?: number }
+): ProductionRecord {
+  return {
+    id: `p-${date}-${eggs.count}`,
+    organization_id: 'org',
+    gallinero_id: 'g1',
+    date,
+    eggs_count: eggs.count,
+    broken_dirty_eggs_count: 0,
+    poultry_count: 50,
+    laying_percentage: 0,
+    eggs_large: eggs.large ?? null,
+    eggs_medium: eggs.medium ?? null,
+    eggs_small: eggs.small ?? null,
+    created_at: `${date}T08:00:00.000Z`,
+  };
+}
+
+const eggOpening = {
+  grande: 100,
+  mediano: 80,
+  chico: 40,
+  sin_clasificar: 20,
+};
+
+/** Misma composición que loadEggInventory (usado por Inventario, Panel y Ventas). */
+function eggStockLikeLoad(
+  production: ProductionRecord[],
+  sales: Sale[],
+  baseline: {
+    baselineDate: string;
+    updatedAt: string;
+    bySize: typeof eggOpening;
+  } | null
+) {
+  if (!baseline) return computeEggStock(production, sales);
+  return computeEggStockFromBaseline(
+    production.filter((p) => dateOnOrAfter(p.date, baseline.baselineDate)),
+    sales.filter((s) =>
+      saleAffectsPackagingAfterBaseline(s, baseline.baselineDate, baseline.updatedAt)
+    ),
+    baseline.bySize
+  );
+}
+
+check('huevos: baseline null = histórico completo (retrocompatible)', () => {
+  const production = [eggProd('2026-09-01', { count: 100, large: 40, medium: 30, small: 10 })];
+  const sales = [sale('maple_grande', 1, '2026-09-02'), sale('docena', 1, '2026-09-03')];
+  assert.deepEqual(
+    computeEggStockFromBaseline(production, sales, null),
+    computeEggStock(production, sales)
+  );
+});
+
+check('huevos: apertura + producción y venta posteriores por tamaño', () => {
+  const cutoff = '2026-10-07';
+  const openedAt = '2026-10-07T12:00:00.000Z';
+  const production = [
+    eggProd('2026-09-01', { count: 999, large: 200, medium: 200, small: 200 }),
+    eggProd('2026-10-08', { count: 20, large: 10, medium: 5, small: 2 }),
+  ];
+  const sales = [
+    sale('maple_grande', 1, '2026-09-15'),
+    sale('maple_grande', 1, '2026-10-08'),
+    sale('maple_mediano', 1, '2026-10-08'),
+  ];
+  const stock = eggStockLikeLoad(production, sales, {
+    baselineDate: cutoff,
+    updatedAt: openedAt,
+    bySize: eggOpening,
+  });
+  assert.equal(stock.grande, 80); // 100 + 10 − 30
+  assert.equal(stock.mediano, 55); // 80 + 5 − 30
+  assert.equal(stock.chico, 42); // 40 + 2
+  assert.equal(stock.sin_clasificar, 23); // 20 + 3 (20−10−5−2)
+  for (const n of Object.values(stock)) {
+    assert.ok(n >= 0, `tamaño negativo: ${n}`);
+  }
+});
+
+check('huevos: sobreventa por tamaño queda en 0 (no negativo)', () => {
+  const stock = computeEggStockFromBaseline(
+    [],
+    [sale('maple_grande', 2), sale('maple_chico', 5), sale('docena', 10)],
+    { grande: 10, mediano: 0, chico: 0, sin_clasificar: 5 }
+  );
+  assert.equal(stock.grande, 0); // 10 − 60
+  assert.equal(stock.mediano, 0);
+  assert.equal(stock.chico, 0); // 0 − 150
+  assert.equal(stock.sin_clasificar, 0); // 5 − 120
+});
+
+check('huevos: venta anterior al corte cargada después de la apertura sí descuenta', () => {
+  const cutoff = '2026-10-07';
+  const openedAt = '2026-10-07T12:00:00.000Z';
+  const backfilled = sale('maple_chico', 1, '2026-10-01');
+  backfilled.created_at = '2026-10-07T15:00:00.000Z';
+  const oldSale = sale('maple_grande', 1, '2026-09-20');
+  oldSale.created_at = '2026-09-20T10:00:00.000Z';
+  const stock = eggStockLikeLoad([], [backfilled, oldSale], {
+    baselineDate: cutoff,
+    updatedAt: openedAt,
+    bySize: eggOpening,
+  });
+  assert.equal(stock.chico, 10); // 40 − 30 (backfill)
+  assert.equal(stock.grande, 100); // venta vieja no descuenta
+  assert.equal(stock.mediano, 80);
+  assert.equal(stock.sin_clasificar, 20);
 });
 
 check('consumo stock: no doblecuenta org + gallinero del mismo mes', () => {

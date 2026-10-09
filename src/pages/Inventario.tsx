@@ -38,7 +38,7 @@ type InventarioProps = {
   onNavigateToFeedConsumption?: (target: { year: number; month: number }) => void;
 };
 
-type BaselineKind = 'maples' | 'feed';
+type BaselineKind = 'maples' | 'feed' | 'eggs';
 
 export default function Inventario({ onNavigateToFeedConsumption }: InventarioProps) {
   const { organizationId, user } = useAuth();
@@ -57,6 +57,12 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
     media_docena: '0',
   });
   const [feedStockKg, setFeedStockKg] = React.useState('0');
+  const [eggForm, setEggForm] = React.useState({
+    grande: '0',
+    mediano: '0',
+    chico: '0',
+    sin_clasificar: '0',
+  });
   const cutoffDate = todayLocalYmd();
 
   const load = React.useCallback(async () => {
@@ -104,6 +110,19 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
     setBaselineKind('maples');
   };
 
+  const openEggBaseline = () => {
+    const src = eggs?.bySize;
+    const nonNeg = (n: number | undefined) => String(Math.max(0, Math.floor(Number(n) || 0)));
+    setEggForm({
+      grande: nonNeg(src?.grande),
+      mediano: nonNeg(src?.mediano),
+      chico: nonNeg(src?.chico),
+      sin_clasificar: nonNeg(src?.sin_clasificar),
+    });
+    setBaselineError('');
+    setBaselineKind('eggs');
+  };
+
   const openFeedBaseline = () => {
     const src = feed?.baseline?.stockKg ?? Math.max(0, Number(feed?.stockKg) || 0);
     setFeedStockKg(String(Number.isFinite(src) ? src : 0));
@@ -138,6 +157,36 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
       await load();
     } catch (e) {
       console.error('Error saving packaging baseline:', e);
+      setBaselineError(formatUnknownError(e, 'No se pudo guardar la apertura.'));
+    } finally {
+      setBaselineSaving(false);
+    }
+  };
+
+  const handleSaveEggBaseline = async () => {
+    if (!organizationId) return;
+    const grande = parseInt(eggForm.grande, 10);
+    const mediano = parseInt(eggForm.mediano, 10);
+    const chico = parseInt(eggForm.chico, 10);
+    const sin_clasificar = parseInt(eggForm.sin_clasificar, 10);
+    if (![grande, mediano, chico, sin_clasificar].every((n) => Number.isFinite(n) && n >= 0)) {
+      setBaselineError('Ingresá cantidades enteras mayores o iguales a 0.');
+      return;
+    }
+    setBaselineSaving(true);
+    setBaselineError('');
+    try {
+      await inventoryStockService.saveEggBaseline(organizationId, user?.id ?? null, {
+        baselineDate: cutoffDate,
+        grande,
+        mediano,
+        chico,
+        sin_clasificar,
+      });
+      setBaselineKind(null);
+      await load();
+    } catch (e) {
+      console.error('Error saving egg baseline:', e);
       setBaselineError(formatUnknownError(e, 'No se pudo guardar la apertura.'));
     } finally {
       setBaselineSaving(false);
@@ -214,6 +263,14 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
                 </li>
               ))}
             </ul>
+            <p className="text-xs text-gray-500">
+              {eggs?.baseline
+                ? `Línea base del ${formatBaselineDate(eggs.baseline.baselineDate)} + producción − ventas.`
+                : 'Entradas: producción. Salidas: ventas.'}
+            </p>
+            <Button type="button" variant="secondary" size="sm" onClick={openEggBaseline}>
+              {eggs?.baseline ? 'Actualizar stock inicial' : 'Declarar stock inicial'}
+            </Button>
           </Card>
 
           <Card className="flex flex-col gap-4">
@@ -303,6 +360,54 @@ export default function Inventario({ onNavigateToFeedConsumption }: InventarioPr
           </Card>
         </div>
       )}
+
+      <Modal
+        isOpen={baselineKind === 'eggs'}
+        onClose={closeBaselineModal}
+        title={
+          eggs?.baseline ? 'Actualizar stock inicial de huevos' : 'Declarar stock inicial de huevos'
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Ingresá el stock físico que tenés hoy. De acá en más el inventario suma producción y resta
+            ventas automáticamente.
+          </p>
+          <p className="text-sm text-gray-700">
+            Fecha de corte: <strong>{formatBaselineDate(cutoffDate)}</strong>
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {eggKeys.map((key) => (
+              <Input
+                key={key}
+                label={EGG_STOCK_LABELS[key]}
+                type="number"
+                min="0"
+                step="1"
+                value={eggForm[key]}
+                onChange={(e) => setEggForm((prev) => ({ ...prev, [key]: e.target.value }))}
+              />
+            ))}
+          </div>
+          {baselineError ? (
+            <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+              {baselineError}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" disabled={baselineSaving} onClick={closeBaselineModal}>
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={baselineSaving}
+              onClick={() => void handleSaveEggBaseline()}
+            >
+              {baselineSaving ? 'Guardando…' : 'Guardar apertura'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={baselineKind === 'maples'}
