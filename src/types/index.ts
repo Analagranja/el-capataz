@@ -85,6 +85,24 @@ export interface Sale {
   created_at: string;
 }
 
+export type EggReservationStatus = 'pendiente' | 'entregada' | 'cancelada';
+
+export interface EggReservation {
+  id: string;
+  organization_id: string;
+  customer_id?: string | null;
+  customer_name?: string;
+  sale_type: SaleType;
+  quantity: number;
+  delivery_date?: string | null;
+  status: EggReservationStatus;
+  converted_sale_id?: string | null;
+  notes?: string | null;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 /** Valores guardados en DB (migración unifica vacuna→vacunacion, observacion→otros) */
 export type EventType =
   | 'vacunacion'

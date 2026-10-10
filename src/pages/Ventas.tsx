@@ -1,7 +1,8 @@
 import React from 'react';
-import { Customer, Page, Sale } from '../types';
+import { Customer, EggReservation, Page, Sale } from '../types';
 import { salesService } from '../services/sales';
 import { customersService } from '../services/customers';
+import { eggReservationsService } from '../services/eggReservations';
 import { useAuth } from '../contexts/AuthContext';
 import {
   availableEggStockForSale,
@@ -66,7 +67,7 @@ const VENTAS_MONTH_OPTIONS = MONTH_NAMES.map((label, i) => ({
 }));
 
 export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => void }) {
-  const { organizationId } = useAuth();
+  const { organizationId, user } = useAuth();
   const [sales, setSales] = React.useState<Sale[]>([]);
   const [customers, setCustomers] = React.useState<Customer[]>([]);
   const [selectedYear, setSelectedYear] = React.useState<string>(String(new Date().getFullYear()));
@@ -74,11 +75,24 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
     String(new Date().getMonth() + 1).padStart(2, '0')
   );
   const [loading, setLoading] = React.useState(true);
-  const [activeTab, setActiveTab] = React.useState<'ventas' | 'cuenta'>('ventas');
+  const [activeTab, setActiveTab] = React.useState<'ventas' | 'cuenta' | 'reservas'>('ventas');
   const [unpaidSales, setUnpaidSales] = React.useState<Sale[]>([]);
   const [unpaidLoading, setUnpaidLoading] = React.useState(false);
   const [expandedGroups, setExpandedGroups] = React.useState<Record<string, boolean>>({});
   const [markingPaidId, setMarkingPaidId] = React.useState<string | null>(null);
+  const [reservations, setReservations] = React.useState<EggReservation[]>([]);
+  const [reservationsLoading, setReservationsLoading] = React.useState(false);
+  const [isReservationModalOpen, setIsReservationModalOpen] = React.useState(false);
+  const [reservationSaving, setReservationSaving] = React.useState(false);
+  const [reservationError, setReservationError] = React.useState('');
+  const [convertingReservationId, setConvertingReservationId] = React.useState<string | null>(null);
+  const [reservationForm, setReservationForm] = React.useState({
+    customer_id: '',
+    type: 'maple' as Sale['type'],
+    quantity: 1,
+    delivery_date: '',
+    notes: '',
+  });
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [isQuickCustomerFormOpen, setIsQuickCustomerFormOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
@@ -148,13 +162,30 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
     loadCustomers();
   }, [organizationId]);
 
+  const loadReservations = async () => {
+    if (!organizationId) return;
+    try {
+      setReservationsLoading(true);
+      const data = await eggReservationsService.listPending(organizationId);
+      setReservations(data);
+    } catch (error) {
+      console.error('Error loading reservations:', error);
+    } finally {
+      setReservationsLoading(false);
+    }
+  };
+
   React.useEffect(() => {
     if (activeTab === 'cuenta') {
       loadUnpaid();
     }
+    if (activeTab === 'reservas') {
+      void loadReservations();
+    }
   }, [organizationId, activeTab]);
 
   const handleOpenModal = (sale?: Sale) => {
+    setConvertingReservationId(null);
     if (sale) {
       setEditingId(sale.id);
       setFormData({
@@ -185,9 +216,91 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setEditingId(null);
+    setConvertingReservationId(null);
     setIsQuickCustomerFormOpen(false);
     setError('');
     setEggStockWarning(null);
+  };
+
+  const handleOpenSaleFromReservation = (reservation: EggReservation) => {
+    setEditingId(null);
+    setConvertingReservationId(reservation.id);
+    setFormData({
+      date: todayLocalYmdParts().ymd,
+      customer_id: reservation.customer_id || '',
+      type: reservation.sale_type,
+      quantity: safeFormNumber(reservation.quantity, 0),
+      price_per_unit: 0,
+      notes: reservation.notes || '',
+      is_paid: true,
+    });
+    setIsQuickCustomerFormOpen(false);
+    setError('');
+    setEggStockWarning(null);
+    setIsModalOpen(true);
+  };
+
+  const handleOpenReservationModal = () => {
+    setReservationError('');
+    setReservationForm({
+      customer_id: customers[0]?.id || '',
+      type: 'maple',
+      quantity: 1,
+      delivery_date: '',
+      notes: '',
+    });
+    setIsReservationModalOpen(true);
+  };
+
+  const handleCloseReservationModal = () => {
+    if (reservationSaving) return;
+    setIsReservationModalOpen(false);
+    setReservationError('');
+  };
+
+  const handleSaveReservation = async () => {
+    if (!organizationId) return;
+    const quantity = Math.floor(Number(reservationForm.quantity) || 0);
+    if (quantity < 1) {
+      setReservationError('Ingresá una cantidad de al menos 1.');
+      return;
+    }
+    setReservationSaving(true);
+    setReservationError('');
+    try {
+      await eggReservationsService.create(organizationId, user?.id ?? null, {
+        customerId: reservationForm.customer_id,
+        saleType: reservationForm.type,
+        quantity,
+        deliveryDate: reservationForm.delivery_date,
+        notes: reservationForm.notes,
+      });
+      setIsReservationModalOpen(false);
+      await loadReservations();
+    } catch (e) {
+      console.error('Error saving reservation:', e);
+      setReservationError(
+        e && typeof e === 'object' && 'message' in e && typeof (e as { message: string }).message === 'string'
+          ? (e as { message: string }).message
+          : 'No se pudo guardar la reserva.'
+      );
+    } finally {
+      setReservationSaving(false);
+    }
+  };
+
+  const handleMarkReservation = async (
+    id: string,
+    status: 'entregada' | 'cancelada',
+    convertedSaleId?: string | null
+  ) => {
+    if (!organizationId) return;
+    try {
+      await eggReservationsService.updateStatus(organizationId, id, status, convertedSaleId);
+      await loadReservations();
+    } catch (e) {
+      console.error('Error updating reservation:', e);
+    }
   };
 
   const handleQuickCreateCustomer = async () => {
@@ -227,7 +340,7 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
           formData.is_paid
         );
       } else {
-        await salesService.create(
+        const created = await salesService.create(
           organizationId,
           formData.date,
           formData.customer_id,
@@ -237,8 +350,19 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
           formData.notes,
           formData.is_paid
         );
+        if (convertingReservationId) {
+          await eggReservationsService.updateStatus(
+            organizationId,
+            convertingReservationId,
+            'entregada',
+            created.id
+          );
+        }
       }
       loadSales();
+      if (convertingReservationId) {
+        void loadReservations();
+      }
       if (activeTab === 'cuenta' || !formData.is_paid) {
         loadUnpaid();
       }
@@ -407,10 +531,17 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-3xl font-bold text-gray-900">Ventas</h2>
-        <Button variant="primary" onClick={() => handleOpenModal()}>
-          <Plus size={20} />
-          Nueva Venta
-        </Button>
+        {activeTab === 'reservas' ? (
+          <Button variant="primary" onClick={handleOpenReservationModal}>
+            <Plus size={20} />
+            Nueva reserva
+          </Button>
+        ) : (
+          <Button variant="primary" onClick={() => handleOpenModal()}>
+            <Plus size={20} />
+            Nueva Venta
+          </Button>
+        )}
       </div>
 
       <div className="flex border-b border-gray-200">
@@ -436,9 +567,89 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
         >
           Cuenta corriente
         </button>
+        <button
+          type="button"
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            activeTab === 'reservas'
+              ? 'border-green-600 text-green-700'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+          onClick={() => setActiveTab('reservas')}
+        >
+          Reservas
+        </button>
       </div>
 
-      {activeTab === 'cuenta' ? (
+      {activeTab === 'reservas' ? (
+        <>
+          {reservationsLoading ? (
+            <div className="p-8 text-center text-gray-500">Cargando...</div>
+          ) : reservations.length === 0 ? (
+            <Card padding="md">
+              <p className="text-sm text-gray-500 text-center py-6">No hay reservas pendientes.</p>
+            </Card>
+          ) : (
+            <Card padding="none">
+              <Table
+                columns={[
+                  {
+                    key: 'customer_name',
+                    label: 'Cliente',
+                    render: (_value, row: EggReservation) =>
+                      row.customer_name || UNASSIGNED_CUSTOMER_LABEL,
+                  },
+                  {
+                    key: 'sale_type',
+                    label: 'Tipo',
+                    render: (value) => (
+                      <Badge label={typeLabels[value as keyof typeof typeLabels]} />
+                    ),
+                  },
+                  { key: 'quantity', label: 'Cantidad' },
+                  {
+                    key: 'delivery_date',
+                    label: 'Fecha',
+                    render: (value) => (value ? String(value).slice(0, 10) : '—'),
+                  },
+                  {
+                    key: 'id',
+                    label: 'Acciones',
+                    render: (_value, row: EggReservation) => (
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          type="button"
+                          onClick={() => handleOpenSaleFromReservation(row)}
+                        >
+                          Convertir en venta
+                        </Button>
+                        <Button
+                          variant="success"
+                          size="sm"
+                          type="button"
+                          onClick={() => void handleMarkReservation(row.id, 'entregada')}
+                        >
+                          Marcar como entregada
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          type="button"
+                          onClick={() => void handleMarkReservation(row.id, 'cancelada')}
+                        >
+                          Cancelar
+                        </Button>
+                      </div>
+                    ),
+                  },
+                ]}
+                data={reservations}
+              />
+            </Card>
+          )}
+        </>
+      ) : activeTab === 'cuenta' ? (
         <>
           <Card padding="md" hover>
             <div>
@@ -797,6 +1008,87 @@ export default function Ventas({ onNavigate }: { onNavigate?: (page: Page) => vo
             </Button>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        isOpen={isReservationModalOpen}
+        onClose={handleCloseReservationModal}
+        title="Nueva reserva"
+      >
+        <div className="space-y-4">
+          {reservationError ? (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+              <p className="text-sm text-red-800">{reservationError}</p>
+            </div>
+          ) : null}
+          <Select
+            label="Cliente"
+            options={[
+              { value: '', label: UNASSIGNED_CUSTOMER_LABEL },
+              ...customers.map((c) => ({
+                value: c.id,
+                label: c.name,
+              })),
+            ]}
+            value={reservationForm.customer_id}
+            onChange={(e) => setReservationForm({ ...reservationForm, customer_id: e.target.value })}
+          />
+          <Select
+            label="Tipo"
+            options={SALE_TYPE_OPTIONS}
+            value={reservationForm.type}
+            onChange={(e) =>
+              setReservationForm({ ...reservationForm, type: e.target.value as Sale['type'] })
+            }
+          />
+          <Input
+            label="Cantidad"
+            type="number"
+            min="1"
+            step="1"
+            value={numberInputValue(reservationForm.quantity)}
+            onChange={(e) =>
+              setReservationForm({
+                ...reservationForm,
+                quantity: parseFormInt(e.target.value, 1),
+              })
+            }
+          />
+          <Input
+            label="Fecha de entrega (opcional)"
+            type="date"
+            value={reservationForm.delivery_date}
+            onChange={(e) =>
+              setReservationForm({ ...reservationForm, delivery_date: e.target.value })
+            }
+          />
+          <Input
+            label="Notas"
+            value={reservationForm.notes}
+            onChange={(e) => setReservationForm({ ...reservationForm, notes: e.target.value })}
+            placeholder="Opcional"
+          />
+          <div className="flex gap-2 pt-2">
+            <Button
+              type="button"
+              variant="primary"
+              className="flex-1"
+              disabled={reservationSaving}
+              onClick={() => void handleSaveReservation()}
+            >
+              {reservationSaving ? 'Guardando…' : 'Guardar reserva'}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              className="flex-1"
+              disabled={reservationSaving}
+              onClick={handleCloseReservationModal}
+            >
+              Cancelar
+            </Button>
+          </div>
+        </div>
       </Modal>
 
       <Modal
