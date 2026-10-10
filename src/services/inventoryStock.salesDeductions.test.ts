@@ -10,6 +10,7 @@ import {
   availableMapleStockForSale,
   computeEggStock,
   computeEggStockFromBaseline,
+  eggRecordAfterBaseline,
   computeFeedStockKg,
   computeFeedStockFromBaseline,
   computeMapleStock,
@@ -463,11 +464,10 @@ function eggStockLikeLoad(
 ) {
   if (!baseline) return computeEggStock(production, sales);
   return computeEggStockFromBaseline(
-    production.filter((p) => dateOnOrAfter(p.date, baseline.baselineDate)),
-    sales.filter((s) =>
-      saleAffectsPackagingAfterBaseline(s, baseline.baselineDate, baseline.updatedAt)
-    ),
-    baseline.bySize
+    production,
+    sales,
+    baseline.bySize,
+    baseline.updatedAt
   );
 }
 
@@ -534,6 +534,42 @@ check('huevos: venta anterior al corte cargada después de la apertura sí descu
   assert.equal(stock.grande, 100); // venta vieja no descuenta
   assert.equal(stock.mediano, 80);
   assert.equal(stock.sin_clasificar, 20);
+});
+
+check('huevos: producción/venta de hoy ANTES de la apertura no se vuelven a aplicar', () => {
+  const openedAt = '2026-10-08T18:00:00.000Z';
+  const priorProd = eggProd('2026-10-08', { count: 40, large: 40, medium: 0, small: 0 });
+  priorProd.created_at = '2026-10-08T10:00:00.000Z';
+  const priorSale = sale('maple_chico', 1, '2026-10-08');
+  priorSale.created_at = '2026-10-08T11:00:00.000Z';
+  const declared = { grande: 0, mediano: 32, chico: 15, sin_clasificar: 88 };
+  const stock = eggStockLikeLoad([priorProd], [priorSale], {
+    baselineDate: '2026-10-08',
+    updatedAt: openedAt,
+    bySize: declared,
+  });
+  assert.equal(stock.grande, 0);
+  assert.equal(stock.mediano, 32);
+  assert.equal(stock.chico, 15);
+  assert.equal(stock.sin_clasificar, 88);
+  assert.equal(eggRecordAfterBaseline(priorProd.created_at, openedAt), false);
+  assert.equal(eggRecordAfterBaseline(priorSale.created_at, openedAt), false);
+});
+
+check('huevos: venta de hoy DESPUÉS de la apertura sí descuenta', () => {
+  const openedAt = '2026-10-08T12:00:00.000Z';
+  const laterSale = sale('maple_mediano', 1, '2026-10-08');
+  laterSale.created_at = '2026-10-08T15:00:00.000Z';
+  const declared = { grande: 0, mediano: 32, chico: 15, sin_clasificar: 88 };
+  const stock = eggStockLikeLoad([], [laterSale], {
+    baselineDate: '2026-10-08',
+    updatedAt: openedAt,
+    bySize: declared,
+  });
+  assert.equal(stock.grande, 0);
+  assert.equal(stock.mediano, 2); // 32 − 30
+  assert.equal(stock.chico, 15);
+  assert.equal(stock.sin_clasificar, 88);
 });
 
 check('consumo stock: no doblecuenta org + gallinero del mismo mes', () => {

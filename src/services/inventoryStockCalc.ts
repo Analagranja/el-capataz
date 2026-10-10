@@ -148,19 +148,41 @@ export function computeEggStock(
 }
 
 /**
+ * true si el registro se cargó después del timestamp de la apertura de huevos.
+ * Compara created_at vs updated_at (timestamptz), no el día calendario.
+ */
+export function eggRecordAfterBaseline(
+  createdAt: string | null | undefined,
+  baselineUpdatedAt: string | null | undefined
+): boolean {
+  const createdMs = Date.parse(String(createdAt || ''));
+  const openedMs = Date.parse(String(baselineUpdatedAt || ''));
+  if (!Number.isFinite(createdMs) || !Number.isFinite(openedMs)) return false;
+  return createdMs > openedMs;
+}
+
+/**
  * Con línea base: mismos descuentos que computeEggStock, partiendo de
- * baseline[tamaño] + producción ≥ corte. Sin baseline (null): histórico completo.
- * productionAfter / salesAfter deben venir ya filtrados por baseline_date cuando hay baseline.
+ * baseline[tamaño] + movimientos cargados DESPUÉS de updated_at.
+ * Sin baseline (null): histórico completo.
+ * Si se pasa baselineUpdatedAt, se filtra por created_at > apertura (no por fecha de negocio).
  */
 export function computeEggStockFromBaseline(
   productionAfter: ProductionRecord[],
   salesAfter: Sale[],
-  baselineBySize: Record<EggStockItemKey, number> | null
+  baselineBySize: Record<EggStockItemKey, number> | null,
+  baselineUpdatedAt?: string | null
 ): Record<EggStockItemKey, number> {
   if (!baselineBySize) return computeEggStock(productionAfter, salesAfter);
+  const production = baselineUpdatedAt
+    ? productionAfter.filter((p) => eggRecordAfterBaseline(p.created_at, baselineUpdatedAt))
+    : productionAfter;
+  const sales = baselineUpdatedAt
+    ? salesAfter.filter((s) => eggRecordAfterBaseline(s.created_at, baselineUpdatedAt))
+    : salesAfter;
   return settleEggStock(
-    addEggBuckets(baselineBySize, eggBucketsFromProduction(productionAfter)),
-    salesAfter
+    addEggBuckets(baselineBySize, eggBucketsFromProduction(production)),
+    sales
   );
 }
 

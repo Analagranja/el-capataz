@@ -42,6 +42,7 @@ export {
   mapleImpactForSale,
   computeEggStock,
   computeEggStockFromBaseline,
+  eggRecordAfterBaseline,
   computeMapleStock,
   computeMapleStockFromBaseline,
   dateOnOrAfter,
@@ -376,16 +377,15 @@ export const inventoryStockService = {
     const bySize = !baseline
       ? computeEggStock(production, sales)
       : computeEggStockFromBaseline(
-          production.filter((p) => dateOnOrAfter(p.date, baseline.baseline_date)),
-          sales.filter((s) =>
-            saleAffectsPackagingAfterBaseline(s, baseline.baseline_date, baseline.updated_at)
-          ),
+          production,
+          sales,
           {
             grande: baseline.grande,
             mediano: baseline.mediano,
             chico: baseline.chico,
             sin_clasificar: baseline.sin_clasificar,
-          }
+          },
+          baseline.updated_at
         );
     const total = bySize.grande + bySize.mediano + bySize.chico + bySize.sin_clasificar;
     const totalProduced = production.reduce((sum, p) => sum + (p.eggs_count || 0), 0);
