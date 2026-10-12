@@ -629,7 +629,7 @@ export default function Produccion({
                 { key: 'eggs_count', label: 'Huevos' },
                 {
                   key: 'broken_dirty_eggs_count',
-                  label: 'Huevos Rotos/Sucios',
+                  label: 'Huevos Rotos/Descartados',
                   render: (value: unknown) => {
                     if (value == null || !Number.isFinite(Number(value))) return '—';
                     const n = Math.floor(Number(value));
@@ -823,7 +823,7 @@ export default function Produccion({
           )}
 
           <Input
-            label="Cantidad de Huevos Rotos/Sucios"
+            label="Cantidad de Huevos Rotos/Descartados"
             type="number"
             value={numberInputValue(formData.broken_dirty_eggs_count)}
             onChange={(e) =>
