@@ -739,6 +739,7 @@ export default function Produccion({
             onChange={(e) => setFormData({ ...formData, eggs_count: parseFormInt(e.target.value, 0) })}
             required
             disabled={clasificarPorTamano}
+            helperText="Cargá el total de huevos recolectados. Los rotos/sucios que anotes se descuentan automáticamente del stock disponible."
           />
 
           <div className="flex items-center gap-2">

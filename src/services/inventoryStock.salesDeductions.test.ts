@@ -170,6 +170,42 @@ check('producción residual a Sin clasificar', () => {
   assert.equal(stock.sin_clasificar, 20);
 });
 
+check('100 huevos, 8 rotos, sin clasificar → entra al stock 92 (no 100)', () => {
+  const production = [eggProd('2026-10-12', { count: 100, broken: 8 })];
+  const historic = computeEggStock(production, []);
+  const fromBaseline = computeEggStockFromBaseline(production, [], null);
+  assert.deepEqual(historic, fromBaseline);
+  assert.equal(historic.sin_clasificar, 92);
+  assert.equal(historic.grande, 0);
+  assert.equal(historic.mediano, 0);
+  assert.equal(historic.chico, 0);
+});
+
+check('clasificada por tamaño + rotos aparte: residual 0, tamaños intactos', () => {
+  // eggs_count = suma de tamaños (como el formulario); rotos van aparte.
+  const production = [
+    eggProd('2026-10-12', { count: 92, large: 40, medium: 30, small: 22, broken: 8 }),
+  ];
+  const historic = computeEggStock(production, []);
+  const fromBaseline = computeEggStockFromBaseline(production, [], null);
+  assert.deepEqual(historic, fromBaseline);
+  assert.equal(historic.grande, 40);
+  assert.equal(historic.mediano, 30);
+  assert.equal(historic.chico, 22);
+  assert.equal(historic.sin_clasificar, 0);
+});
+
+check('rotos no se descuentan de Grande/Mediano/Chico (solo residual)', () => {
+  const production = [
+    eggProd('2026-10-12', { count: 100, large: 40, medium: 30, small: 10, broken: 8 }),
+  ];
+  const stock = computeEggStock(production, []);
+  assert.equal(stock.grande, 40);
+  assert.equal(stock.mediano, 30);
+  assert.equal(stock.chico, 10);
+  assert.equal(stock.sin_clasificar, 12); // 100 − 8 − 40 − 30 − 10
+});
+
 check('sobreventa maple_chico: Chico→0 y excedente sale de Sin clasificar', () => {
   // 30 Chico + 50 Sin clasificar; vendo 60 Chico (2 maples) forzando guardado.
   // Igual que Panel: Chico=0, Sin clasificar=20 (50−30 de excedente).
@@ -427,7 +463,7 @@ check('venta con fecha anterior pero cargada después de la apertura sí descuen
 
 function eggProd(
   date: string,
-  eggs: { count: number; large?: number; medium?: number; small?: number }
+  eggs: { count: number; large?: number; medium?: number; small?: number; broken?: number }
 ): ProductionRecord {
   return {
     id: `p-${date}-${eggs.count}`,
@@ -435,7 +471,7 @@ function eggProd(
     gallinero_id: 'g1',
     date,
     eggs_count: eggs.count,
-    broken_dirty_eggs_count: 0,
+    broken_dirty_eggs_count: eggs.broken ?? 0,
     poultry_count: 50,
     laying_percentage: 0,
     eggs_large: eggs.large ?? null,
@@ -504,6 +540,17 @@ check('huevos: apertura + producción y venta posteriores por tamaño', () => {
   for (const n of Object.values(stock)) {
     assert.ok(n >= 0, `tamaño negativo: ${n}`);
   }
+});
+
+check('huevos: apertura + producción sin clasificar con rotos resta del residual', () => {
+  const openedAt = '2026-10-07T12:00:00.000Z';
+  const production = [eggProd('2026-10-08', { count: 100, broken: 8 })];
+  production[0].created_at = '2026-10-08T10:00:00.000Z';
+  const stock = computeEggStockFromBaseline(production, [], eggOpening, openedAt);
+  assert.equal(stock.grande, 100);
+  assert.equal(stock.mediano, 80);
+  assert.equal(stock.chico, 40);
+  assert.equal(stock.sin_clasificar, 112); // 20 apertura + 92 (100 − 8)
 });
 
 check('huevos: sobreventa por tamaño queda en 0 (no negativo)', () => {

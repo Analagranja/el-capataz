@@ -68,12 +68,19 @@ export function mapleImpactForSale(
   return null;
 }
 
+/**
+ * Residual que entra a "Sin clasificar".
+ * eggs_count es el total recolectado; broken_dirty_eggs_count son los
+ * rotos/sucios ya conocidos al cargar producción. Se restan solo de este
+ * residual (nunca de Grande/Mediano/Chico). Piso en 0.
+ */
 function unclassifiedEggsProduced(p: ProductionRecord): number {
   const total = Math.max(0, Number(p.eggs_count) || 0);
+  const broken = Math.max(0, Number(p.broken_dirty_eggs_count) || 0);
   const large = Math.max(0, Number(p.eggs_large) || 0);
   const medium = Math.max(0, Number(p.eggs_medium) || 0);
   const small = Math.max(0, Number(p.eggs_small) || 0);
-  return Math.max(0, total - large - medium - small);
+  return Math.max(0, total - broken - large - medium - small);
 }
 
 function eggBucketsFromProduction(
