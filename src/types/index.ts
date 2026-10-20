@@ -132,6 +132,8 @@ export interface Organization {
   name: string;
   created_at: string;
   is_paying_customer?: boolean;
+  paying_status_changed_at?: string | null;
+  trial_ends_at?: string | null;
 }
 
 export interface Customer {

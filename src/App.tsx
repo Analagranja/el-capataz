@@ -16,6 +16,7 @@ import Eventos from './pages/Eventos';
 import Estadisticas from './pages/Estadisticas';
 import Configuracion from './pages/Configuracion';
 import Button from './components/ui/Button';
+import TrialSubscriptionBanner from './components/TrialSubscriptionBanner';
 import { Loader2 } from 'lucide-react';
 import { canAccessPage, defaultPageForRole, useRole } from './hooks/useRole';
 import { DashboardMetricsRefreshProvider } from './contexts/DashboardMetricsRefreshContext';
@@ -111,7 +112,10 @@ function AppShell() {
         <div className="flex-1 flex flex-col overflow-hidden lg:ml-0 ml-0">
           <AppHeader selectedGallineroId={selectedGallineroId} onGallineroChange={setSelectedGallineroId} />
           <main className="flex-1 overflow-auto">
-            <div className="p-6 lg:p-8">{renderPage()}</div>
+            <div className="p-6 lg:p-8">
+              <TrialSubscriptionBanner />
+              {renderPage()}
+            </div>
           </main>
         </div>
       </div>

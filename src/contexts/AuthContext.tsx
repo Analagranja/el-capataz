@@ -2,6 +2,12 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../services/supabase';
 import type { UserRole } from '../types';
+import {
+  deriveOrgBilling,
+  emptyOrgBilling,
+  type BillingPhase,
+  type OrgBillingFields,
+} from '../utils/orgBilling';
 
 function normalizeUserRole(raw: unknown): UserRole {
   const s = String(raw ?? '')
@@ -24,6 +30,10 @@ type AuthContextValue = {
   /** Refresh de org con sesión ya resuelta (no desmonta AppShell). */
   orgSyncing: boolean;
   organizationMissing: boolean;
+  isReadOnly: boolean;
+  daysRemainingUntilReadOnly: number | null;
+  billingPhase: BillingPhase;
+  trialDaysRemaining: number | null;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (
     email: string,
@@ -82,15 +92,29 @@ async function fetchMembership(userId: string) {
       .limit(1)
       .maybeSingle();
 
-    if (error || !data) return { organizationId: null, organizationName: null };
+    if (error || !data) return { organizationId: null, organizationName: null, billing: emptyOrgBilling() };
 
     const row = data as any;
-    return { 
-      organizationId: row.organization_id, 
-      organizationName: row.organizations?.name || 'Mi Granja' 
-    };
+    const organizationId = row.organization_id as string;
+    const organizationName = row.organizations?.name || 'Mi Granja';
+    let billing = emptyOrgBilling();
+    try {
+      const { data: orgRow, error: orgError } = await supabase
+        .from('organizations')
+        .select('is_paying_customer, paying_status_changed_at, trial_ends_at')
+        .eq('id', organizationId)
+        .maybeSingle();
+      if (orgError) {
+        console.error('Error loading organization billing:', orgError);
+      } else if (orgRow) {
+        billing = deriveOrgBilling(orgRow as OrgBillingFields);
+      }
+    } catch (billingErr) {
+      console.error('Error loading organization billing:', billingErr);
+    }
+    return { organizationId, organizationName, billing };
   } catch (e) {
-    return { organizationId: null, organizationName: null };
+    return { organizationId: null, organizationName: null, billing: emptyOrgBilling() };
   }
 }
 
@@ -101,6 +125,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [organizationName, setOrganizationName] = useState<string | null>(null);
   const [loading] = useState(false);
   const [organizationMissing, setOrganizationMissing] = useState(false);
+  const [isReadOnly, setIsReadOnly] = useState(false);
+  const [daysRemainingUntilReadOnly, setDaysRemainingUntilReadOnly] = useState<number | null>(null);
+  const [billingPhase, setBillingPhase] = useState<BillingPhase>('unstarted');
+  const [trialDaysRemaining, setTrialDaysRemaining] = useState<number | null>(null);
   /** Evita aplicar rol de una petición obsoleta (logout, Strict Mode, cambio de usuario). */
   const roleLoadSeq = useRef(0);
   const orgLoadSeq = useRef(0);
@@ -119,7 +147,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     try {
       await ensureFarmOrganizationFromSession(userId);
-      const { organizationId: oid, organizationName: oname } = await fetchMembership(userId);
+      const { organizationId: oid, organizationName: oname, billing } = await fetchMembership(userId);
       if (seq !== orgLoadSeq.current) return;
       if (keepAlive && !oid) {
         console.error('Error loading organization: membership unavailable during session refresh');
@@ -128,6 +156,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setOrganizationId(oid);
       setOrganizationName(oname);
       setOrganizationMissing(!oid);
+      setIsReadOnly(billing.isReadOnly);
+      setDaysRemainingUntilReadOnly(billing.daysRemainingUntilReadOnly);
+      setBillingPhase(billing.phase);
+      setTrialDaysRemaining(billing.trialDaysRemaining);
       resolvedUserIdRef.current = oid ? userId : null;
     } catch (error) {
       console.error('Error loading organization:', error);
@@ -138,6 +170,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setOrganizationId(null);
       setOrganizationName(null);
       setOrganizationMissing(true);
+      setIsReadOnly(false);
+      setDaysRemainingUntilReadOnly(null);
+      setBillingPhase('unstarted');
+      setTrialDaysRemaining(null);
       resolvedUserIdRef.current = null;
     } finally {
       if (seq === orgLoadSeq.current) {
@@ -206,6 +242,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setOrganizationMissing(false);
         setOrganizationResolved(false);
         setOrgSyncing(false);
+        setIsReadOnly(false);
+        setDaysRemainingUntilReadOnly(null);
+        setBillingPhase('unstarted');
+        setTrialDaysRemaining(null);
       }
     });
 
@@ -245,6 +285,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setOrganizationMissing(false);
         setOrganizationResolved(false);
         setOrgSyncing(false);
+        setIsReadOnly(false);
+        setDaysRemainingUntilReadOnly(null);
+        setBillingPhase('unstarted');
+        setTrialDaysRemaining(null);
       }
     };
 
@@ -349,8 +393,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo(() => ({
     session, user: session?.user ?? null, role, organizationId, organizationName,
-    loading, organizationResolved, orgSyncing, organizationMissing, signIn, signUp, signOut, refreshOrganization
-  }), [session, role, organizationId, organizationName, loading, organizationResolved, orgSyncing, organizationMissing, signIn, signUp, signOut, refreshOrganization]);
+    loading, organizationResolved, orgSyncing, organizationMissing,
+    isReadOnly, daysRemainingUntilReadOnly, billingPhase, trialDaysRemaining,
+    signIn, signUp, signOut, refreshOrganization
+  }), [
+    session, role, organizationId, organizationName, loading, organizationResolved,
+    orgSyncing, organizationMissing, isReadOnly, daysRemainingUntilReadOnly,
+    billingPhase, trialDaysRemaining, signIn, signUp, signOut, refreshOrganization,
+  ]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
