@@ -1,6 +1,9 @@
-/** Links de suscripción Mercado Pago (landing descarga.html). */
+/** Links de suscripción Mercado Pago. */
 export const SUBSCRIPTION_PLAN_LINKS = {
+  /** Landing y prueba activa: plan con días de prueba. */
   basico: 'https://mpago.la/16fRYJT',
+  /** Prueba ya vencida (gracia o solo lectura): pago el mismo día, sin prueba. */
+  basicoPostTrial: 'https://mpago.la/1fbT5uP',
   pro: 'https://mpago.la/1XwivfQ',
 } as const;
 

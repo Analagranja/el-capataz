@@ -4,6 +4,13 @@ import { SUBSCRIPTION_PLAN_LINKS } from '../constants/subscription';
 import { useAuth } from '../contexts/AuthContext';
 import { subscriptionBannerCopy, type OrgBillingStatus } from '../utils/orgBilling';
 
+function checkoutUrlForPhase(phase: OrgBillingStatus['phase']): string {
+  if (phase === 'grace' || phase === 'readonly') {
+    return SUBSCRIPTION_PLAN_LINKS.basicoPostTrial;
+  }
+  return SUBSCRIPTION_PLAN_LINKS.basico;
+}
+
 export default function TrialSubscriptionBanner() {
   const { isReadOnly, daysRemainingUntilReadOnly, billingPhase, trialDaysRemaining } = useAuth();
 
@@ -16,6 +23,8 @@ export default function TrialSubscriptionBanner() {
   const copy = subscriptionBannerCopy(status);
   if (!copy) return null;
 
+  const checkoutUrl = checkoutUrlForPhase(billingPhase);
+
   return (
     <div
       role="status"
@@ -27,7 +36,7 @@ export default function TrialSubscriptionBanner() {
         size="sm"
         type="button"
         className="shrink-0"
-        onClick={() => window.open(SUBSCRIPTION_PLAN_LINKS.basico, '_blank', 'noopener,noreferrer')}
+        onClick={() => window.open(checkoutUrl, '_blank', 'noopener,noreferrer')}
       >
         Suscribirme
       </Button>
